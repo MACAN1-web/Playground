@@ -2,104 +2,90 @@
 
 Веб-система для публикации рейтингов абитуриентов из Excel-файлов и внутреннего учёта оригиналов документов.
 
-Проект разделён на три независимых приложения:
+Проект теперь разделён на **три независимых приложения**. У каждого приложения свой `package.json`, свой `node_modules`, своя сборка и свой запуск.
 
-- `apps/backend` — API, авторизация, PostgreSQL, бизнес-логика, импорт/экспорт Excel.
-- `apps/client` — публичное приложение для абитуриентов.
-- `apps/admin` — отдельная админ-панель для сотрудников.
+```text
+backend/   # API, авторизация, PostgreSQL, бизнес-логика, импорт/экспорт Excel
+client/    # публичное приложение для абитуриентов
+admin/     # отдельная админ-панель для сотрудников
+```
+
+В корне остаются общие файлы проекта:
+
+```text
+README.md
+.gitignore
+docker-compose.yml
+.env
+.env.example
+```
 
 ---
 
 ## Возможности
 
-### Публичное приложение
+### Client
 
 - Поиск абитуриента по полному СНИЛС.
-- Отображение СНИЛС только в маске: первые 3 и последние 3 цифры.
+- Маскированный вывод СНИЛС: первые 3 и последние 3 цифры.
 - Просмотр списков поступающих по специальностям.
-- Разделение одинаковых специальностей по форме обучения: `Очная` и `Заочная`.
+- Разделение списков по форме обучения: `Очная`, `Заочная`, `Очно-заочная`.
 - Отображение бюджетных и внебюджетных мест.
-- Отображение отметки, принесён оригинал документа или нет.
+- Отображение отметки оригинала документа.
 
-### Админ-панель
+### Admin
 
 - Вход сотрудника через email и пароль.
 - Загрузка Excel-файла с реестром заявлений.
 - Автоматическое распределение абитуриентов по специальностям и форме обучения.
-- Поиск абитуриентов по ФИО, СНИЛС, коду или части названия специальности.
+- Поиск по ФИО, СНИЛС, коду или части названия специальности.
 - Отметка оригинала документа.
 - Отметка первоочередного зачисления.
 - Редактирование количества бюджетных и внебюджетных мест.
 - Выгрузка Excel-файла по каждой специальности для абитуриентов с оригиналом.
-- Удаление всех опубликованных специальностей.
+
+### Backend
+
+- REST API.
+- JWT access token.
+- Refresh token в `httpOnly` cookie.
+- Проверка роли `admin` для административных маршрутов.
+- PostgreSQL.
+- Импорт `.xls/.xlsx`.
+- Экспорт `.xlsx`.
 
 ---
 
-## Технологии
+## Установка
 
-- React
-- TypeScript
-- Vite
-- Express
-- PostgreSQL
-- JWT access token
-- Refresh token в `httpOnly` cookie
-- Excel import через `xlsx`
-- Excel export через `exceljs`
-
----
-
-## Структура проекта
-
-```text
-apps/
-  backend/
-    src/
-      controllers/
-      lib/
-      middlewares/
-      migrations/
-      routes/
-      services/
-      index.ts
-      migrate.ts
-      seed-admin.ts
-  client/
-    src/
-      App.tsx
-      api.ts
-      main.tsx
-      styles.css
-      types.ts
-  admin/
-    src/
-      App.tsx
-      api.ts
-      main.tsx
-      styles.css
-      types.ts
-scripts/
-  api.test.mjs
-  transfer-sqlite-to-postgres.ts
-```
-
----
-
-## Быстрый запуск локально
-
-### 1. Установить зависимости
+Устанавливать зависимости нужно отдельно в каждом приложении.
 
 ```bash
+cd backend
 npm install
 ```
 
-### 2. Создать `.env`
+```bash
+cd ../client
+npm install
+```
+
+```bash
+cd ../admin
+npm install
+```
+
+---
+
+## `.env`
+
+Создайте `.env` в корне проекта:
 
 ```bash
 cp .env.example .env
 ```
 
-Пример `.env`:
+Пример:
 
 ```env
 AUTH_SECRET=change-this-long-secret
@@ -109,98 +95,160 @@ APP_ORIGIN=http://localhost:5173,http://localhost:5174
 VITE_API_URL=http://localhost:3001
 ```
 
-Для `AUTH_SECRET` лучше сгенерировать длинную строку:
+`AUTH_SECRET` лучше сгенерировать:
 
 ```bash
 openssl rand -hex 32
 ```
 
-### 3. Запустить PostgreSQL
+---
+
+## Первый запуск локально
+
+### 1. Запустить PostgreSQL
+
+Из корня проекта:
 
 ```bash
 docker compose up -d postgres
 ```
 
-### 4. Применить миграции
+### 2. Применить миграции
 
 ```bash
+cd backend
 npm run db:migrate
 ```
 
-### 5. Создать администратора
+### 3. Создать администратора
 
 ```bash
 npm run admin:create -- admin@example.com strong-password
 ```
 
-Если пользователь с таким email уже есть, команда обновит пароль и назначит роль `admin`.
+Если пользователь уже существует, команда обновит пароль и назначит роль `admin`.
 
-### 6. Запустить приложения
-
-В трёх разных терминалах:
+### 4. Запустить backend
 
 ```bash
-npm run dev:backend
+cd backend
+npm run dev
 ```
+
+Backend будет доступен на:
+
+```text
+http://localhost:3001
+```
+
+### 5. Запустить client
+
+В новом терминале:
 
 ```bash
-npm run dev:client
+cd client
+npm run dev
 ```
+
+Client будет доступен на:
+
+```text
+http://localhost:5173
+```
+
+### 6. Запустить admin
+
+В новом терминале:
 
 ```bash
-npm run dev:admin
+cd admin
+npm run dev
 ```
 
-Адреса по умолчанию:
+Admin будет доступен на:
 
-- Backend API: `http://localhost:3001`
-- Client: `http://localhost:5173`
-- Admin: `http://localhost:5174`
+```text
+http://localhost:5174
+```
 
 ---
 
-## Авторизация
+## Запуск на телефоне в одной Wi‑Fi сети
 
-Администраторы больше не создаются через `ADMIN_PASSWORD`.
+Если открываете с телефона, `localhost` не подойдёт. Нужно использовать IP вашего Mac.
 
-Теперь администратор хранится в таблице `users`:
+Пример:
 
-- `id`
-- `email`
-- `password_hash`
-- `role`
+```env
+APP_ORIGIN=http://localhost:5173,http://localhost:5174,http://192.168.1.16:5173,http://192.168.1.16:5174
+VITE_API_URL=http://192.168.1.16:3001
+```
 
-Для админки нужна роль `admin`.
-
-### Как работает сессия
-
-1. Админ вводит email и пароль.
-2. Backend выдаёт короткоживущий access token.
-3. Refresh token сохраняется в `httpOnly` cookie.
-4. Если access token истёк, admin-приложение вызывает `/api/auth/refresh`.
-5. Backend проверяет refresh token и выдаёт новый access token.
-6. Исходный запрос повторяется автоматически.
-
-### Защита admin API
-
-Админские маршруты проверяют:
-
-- наличие access token;
-- валидность JWT;
-- срок действия JWT;
-- роль пользователя `admin`.
-
-Ожидаемые ответы:
-
-- без токена — `401 Unauthorized`;
-- невалидный токен — `401 Unauthorized`;
-- нет роли `admin` — `403 Forbidden`.
+После изменения `.env` перезапустите backend, client и admin.
 
 ---
 
-## Формат Excel-файла
+## Сборка
 
-Поддерживаются `.xls` и `.xlsx`.
+Каждое приложение собирается отдельно.
+
+```bash
+cd backend
+npm run build
+```
+
+```bash
+cd client
+npm run build
+```
+
+```bash
+cd admin
+npm run build
+```
+
+Результат:
+
+```text
+backend/dist
+client/dist
+admin/dist
+```
+
+---
+
+## Тесты
+
+Backend-тесты находятся рядом с backend:
+
+```text
+backend/tests/api.test.mjs
+```
+
+Запуск:
+
+```bash
+cd backend
+npm test
+```
+
+Тесты проверяют:
+
+- защиту admin API;
+- `401` без токена;
+- `401` с невалидным токеном;
+- `403` без роли admin;
+- refresh token rotation;
+- logout;
+- CORS;
+- импорт Excel;
+- маскировку СНИЛС;
+- формы обучения `Очная`, `Заочная`, `Очно-заочная`;
+- экспорт Excel и жёлтую подсветку внебюджета.
+
+---
+
+## Формат Excel
 
 Основной формат — единый реестр заявлений с колонками:
 
@@ -211,149 +259,89 @@ npm run dev:admin
 - `Фамилия абитуриента`
 - `Имя абитуриента`
 - `Отчество абитуриента`
-- `Статус заявления` — может быть в файле, но на публичном сайте не отображается
+- `Статус заявления`
 
-Система группирует записи по паре:
+Форма обучения нормализуется к значениям:
 
 ```text
-Специальность + Форма обучения
+Очная
+Заочная
+Очно-заочная
 ```
 
-Если одна специальность есть в очной и заочной форме, создаются два отдельных списка.
+Если одна специальность встречается с разными формами обучения, создаются разные списки.
 
 ---
 
-## Логика рейтинга
+## Авторизация
 
-Сортировка внутри специальности:
+Администраторы хранятся в таблице `users`, а не в `.env`.
 
-1. Абитуриенты с оригиналом документа.
-2. Среди них — абитуриенты с первоочередным зачислением.
-3. Далее сортировка по среднему баллу.
-4. Затем по СНИЛС для стабильного порядка.
+Поля пользователя:
 
-В публичном списке для первоочередного зачисления в колонке среднего балла показывается текст `первоочередное зачисление`.
+- `id`
+- `email`
+- `password_hash`
+- `role`
 
-В поиске по СНИЛС показывается реальный средний балл.
+Для админки нужна роль `admin`.
 
----
+Сессия работает так:
 
-## Проверка проекта
-
-### Сборка всех приложений
-
-```bash
-npm run build
-```
-
-### Тесты API
-
-```bash
-npm test
-```
-
-Тесты проверяют:
-
-- защиту админских маршрутов;
-- `401` без токена;
-- `401` с невалидным токеном;
-- `403` без роли admin;
-- refresh token;
-- импорт Excel;
-- поиск;
-- оригиналы документов;
-- первоочередное зачисление;
-- экспорт Excel.
+1. Админ входит по email и паролю.
+2. Backend выдаёт короткоживущий access token.
+3. Refresh token сохраняется в `httpOnly` cookie.
+4. При `401` admin-приложение вызывает `/api/auth/refresh`.
+5. Backend выдаёт новый access token.
+6. Исходный запрос повторяется автоматически.
 
 ---
 
 ## Production
 
-В production обязательно задать:
+Рекомендуемая схема:
+
+```text
+client:  https://example.ru
+admin:   https://admin.example.ru
+backend: https://api.example.ru
+```
+
+Production `.env`:
 
 ```env
-AUTH_SECRET=длинный_секрет
-DATABASE_URL=postgresql://...
-APP_ORIGIN=https://site.example,https://admin.example
+AUTH_SECRET=очень_длинный_секрет
 PORT=3001
+DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/college_rating
+APP_ORIGIN=https://example.ru,https://admin.example.ru
+VITE_API_URL=https://api.example.ru
 ```
 
-`ADMIN_PASSWORD` больше не нужен.
-
-После деплоя нужно один раз создать администратора:
-
-```bash
-npm run admin:create -- admin@example.com strong-password
-```
-
-Секреты нельзя хранить в Git. Их нужно задавать через настройки сервера или панели хостинга.
+Важно: `VITE_API_URL` вшивается во frontend во время сборки, поэтому задайте его до `npm run build` в `client` и `admin`.
 
 ---
 
 ## Git
 
-Перед первым пушем проверьте:
-
-```bash
-git status
-```
-
 В Git не должны попадать:
 
 - `.env`
 - `node_modules`
-- `dist`
-- `dist-server`
+- `backend/node_modules`
+- `client/node_modules`
+- `admin/node_modules`
+- `backend/dist`
+- `client/dist`
+- `admin/dist`
 - `data`
 - `outputs`
 
-Если remote ещё не добавлен:
-
-```bash
-git remote add origin https://github.com/LOGIN/REPO.git
-```
-
-Первый пуш:
+Первый push:
 
 ```bash
 git add .
-git commit -m "Refactor app architecture and auth"
+git commit -m "Split backend client admin apps"
 git branch -M main
+git remote add origin https://github.com/LOGIN/REPO.git
 git push -u origin main
-```
-
-Если появляется ошибка `origin does not appear to be a git repository`, проверьте:
-
-```bash
-git remote -v
-```
-
-Если origin неправильный:
-
-```bash
-git remote set-url origin https://github.com/LOGIN/REPO.git
-```
-
----
-
-## Полезные команды
-
-```bash
-npm run dev:backend
-npm run dev:client
-npm run dev:admin
-npm run db:migrate
-npm run admin:create -- admin@example.com strong-password
-npm run build
-npm test
-```
-
----
-
-## Документация
-
-Подробная техническая документация находится в:
-
-```text
-docs/PROJECT_DOCUMENTATION.md
 ```

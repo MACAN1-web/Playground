@@ -1,0 +1,30 @@
+{
+  "name": "college-rating-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "node --test tests/api.test.mjs",
+    "db:migrate": "tsx src/migrate.ts",
+    "admin:create": "tsx src/seed-admin.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "pg": "^8.16.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.2",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.15.21",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.19.4",
+    "typescript": "~5.8.3"
+  }
+}
