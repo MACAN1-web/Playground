@@ -4,6 +4,8 @@ const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
 export const rateLimit = (name: string, limit: number, windowMs: number) =>
   (request: Request, response: Response, next: NextFunction) => {
+    if (process.env.NODE_ENV === "test") return next();
+
     const key = `${name}:${request.ip}`;
     const now = Date.now();
     const current = rateLimits.get(key);

@@ -138,6 +138,7 @@ function ListsTab({ directions }: { directions: Direction[] }) {
 
 function Admin({ directions, refresh }: { directions: Direction[]; refresh: () => void }) {
   const [token, setToken] = useState(sessionStorage.getItem("admin-access-token") || "");
+  const [authChecking, setAuthChecking] = useState(Boolean(sessionStorage.getItem("admin-access-token")));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -153,10 +154,39 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
     configureAuthToken(
       () => sessionStorage.getItem("admin-access-token") || token,
       (newToken) => {
-        sessionStorage.setItem("admin-access-token", newToken);
+        if (newToken) sessionStorage.setItem("admin-access-token", newToken);
+        else sessionStorage.removeItem("admin-access-token");
         setToken(newToken);
       }
     );
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      setAuthChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthChecking(true);
+    api.get<{ user: { id: number; role: string } }>("/api/auth/me")
+      .then(() => {
+        if (!cancelled) setMessage("");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          sessionStorage.removeItem("admin-access-token");
+          setToken("");
+          setMessage("Сессия истекла. Войдите заново.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecking(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [token]);
 
   useEffect(() => {
@@ -330,6 +360,7 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
     } catch (error) { setMessage((error as Error).message); }
   }
 
+  if (authChecking) return <section className="admin-grid"><div className="panel wide"><p className="message">Проверяем сессию администратора...</p></div></section>;
   if (!token) return <LoginPage email={email} password={password} message={message} onEmailChange={setEmail} onPasswordChange={setPassword} onSubmit={login} />;
 
   return <section className="admin-grid">

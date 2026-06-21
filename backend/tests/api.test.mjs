@@ -106,6 +106,7 @@ test.before(async () => {
     env: {
       ...process.env,
       PORT: String(port),
+      NODE_ENV: "test",
       AUTH_SECRET: "test-secret",
       APP_ORIGIN: "http://localhost:5173,http://localhost:5174",
       DATABASE_URL: testDatabaseUrl
@@ -150,6 +151,37 @@ test("защищает админские эндпоинты", async () => {
     body: JSON.stringify({ budgetPlaces: 1, paidPlaces: 1 })
   });
   assert.equal(forbiddenWrite.response.status, 403);
+});
+
+test("проверяет валидность токена для админской сессии", async () => {
+  const withoutToken = await request("/api/auth/me");
+  assert.equal(withoutToken.response.status, 401);
+
+  const invalidToken = await request("/api/auth/me", {
+    headers: { Authorization: "Bearer invalid-token" }
+  });
+  assert.equal(invalidToken.response.status, 401);
+
+  const userLogin = await request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "user@example.com", password: "test-password" })
+  });
+  const regularUser = await request("/api/auth/me", {
+    headers: { Authorization: `Bearer ${userLogin.body.accessToken}` }
+  });
+  assert.equal(regularUser.response.status, 403);
+
+  const adminLogin = await request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.com", password: "test-password" })
+  });
+  const adminUser = await request("/api/auth/me", {
+    headers: { Authorization: `Bearer ${adminLogin.body.accessToken}` }
+  });
+  assert.equal(adminUser.response.status, 200);
+  assert.equal(adminUser.body.user.role, "admin");
 });
 
 test("обновляет access token через refresh cookie", async () => {

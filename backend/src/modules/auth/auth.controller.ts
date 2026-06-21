@@ -1,6 +1,10 @@
 import type { Request, Response } from "express";
 import { clearRefreshCookie, createSession, getRefreshCookieName, loginUser, logoutSession, parseCookies, refreshSession, setRefreshCookie } from "./auth.service.js";
 
+export const me = async (request: Request, response: Response) => {
+  response.json({ user: request.user });
+};
+
 export const login = async (request: Request, response: Response) => {
   const email = String(request.body.email ?? "").trim();
   const password = String(request.body.password ?? "");
