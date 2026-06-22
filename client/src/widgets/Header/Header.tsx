@@ -1,3 +1,5 @@
+import logo from "../../assets/logo.jpg";
+
 type HeaderProps = {
   activeTab: "search" | "lists";
   onTabChange: (tab: "search" | "lists") => void;
@@ -6,7 +8,7 @@ type HeaderProps = {
 export function Header({ activeTab, onTabChange }: HeaderProps) {
   return <header>
     <div className="brand">
-      <div className="logo">К</div>
+      <img className="logo" src={logo} alt="Логотип колледжа" />
       <div><strong>Приёмная комиссия</strong><span>Рейтинги абитуриентов</span></div>
     </div>
     <nav>
