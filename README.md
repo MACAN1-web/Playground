@@ -88,10 +88,14 @@ cp .env.example .env
 Пример:
 
 ```env
-AUTH_SECRET=change-this-long-secret
-PORT=3001
-DATABASE_URL=postgresql://college_app:local-development-password@127.0.0.1:5432/college_rating
-APP_ORIGIN=http://localhost:5173,http://localhost:5174
+AUTH_SECRET=change-this-long-random-secret
+POSTGRES_DB=college_rating
+POSTGRES_USER=college_app
+POSTGRES_PASSWORD=local-development-password
+BACKEND_PORT=3001
+CLIENT_PORT=8080
+ADMIN_PORT=8081
+APP_ORIGIN=http://localhost:5173,http://localhost:5174,http://localhost:8080,http://localhost:8081
 VITE_API_URL=http://localhost:3001
 ```
 
@@ -170,6 +174,66 @@ Admin будет доступен на:
 ```text
 http://localhost:5174
 ```
+
+---
+
+## Запуск через Docker Compose
+
+Этот вариант удобен для сервера: Docker сам соберёт `backend`, `client`, `admin`, поднимет PostgreSQL и применит миграции.
+
+### 1. Подготовить `.env`
+
+```bash
+cp .env.example .env
+```
+
+Для локальной проверки через Docker можно оставить:
+
+```env
+APP_ORIGIN=http://localhost:8080,http://localhost:8081
+VITE_API_URL=http://localhost:3001
+```
+
+Для сервера замените на реальные адреса:
+
+```env
+APP_ORIGIN=https://site.ru,https://admin.site.ru
+VITE_API_URL=https://api.site.ru
+```
+
+### 2. Собрать и запустить
+
+```bash
+docker compose up --build -d
+```
+
+Адреса по умолчанию:
+
+```text
+client:  http://localhost:8080
+admin:   http://localhost:8081
+backend: http://localhost:3001
+```
+
+### 3. Создать администратора
+
+```bash
+docker compose exec backend node dist/seed-admin.js admin@example.com strong-password
+```
+
+### 4. Посмотреть логи
+
+```bash
+docker compose logs -f backend
+```
+
+### 5. Остановить
+
+```bash
+docker compose down
+```
+
+Данные PostgreSQL сохраняются в Docker volume `college_postgres_data`.
 
 ---
 
@@ -311,13 +375,17 @@ Production `.env`:
 
 ```env
 AUTH_SECRET=очень_длинный_секрет
-PORT=3001
-DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/college_rating
+POSTGRES_DB=college_rating
+POSTGRES_USER=college_app
+POSTGRES_PASSWORD=очень_сложный_пароль_базы
+BACKEND_PORT=3001
+CLIENT_PORT=8080
+ADMIN_PORT=8081
 APP_ORIGIN=https://example.ru,https://admin.example.ru
 VITE_API_URL=https://api.example.ru
 ```
 
-Важно: `VITE_API_URL` вшивается во frontend во время сборки, поэтому задайте его до `npm run build` в `client` и `admin`.
+Важно: `VITE_API_URL` вшивается во frontend во время сборки, поэтому задайте его до `npm run build` или до `docker compose up --build`.
 
 ---
 

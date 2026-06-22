@@ -1,19 +1,65 @@
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: college_rating
-      POSTGRES_USER: college_app
-      POSTGRES_PASSWORD: local-development-password
+      POSTGRES_DB: ${POSTGRES_DB:-college_rating}
+      POSTGRES_USER: ${POSTGRES_USER:-college_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-password}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - college_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U college_app -d college_rating"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 3s
       timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:8080,http://localhost:8081}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-college_app}:${POSTGRES_PASSWORD:-local-development-password}@postgres:5432/${POSTGRES_DB:-college_rating}
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/directions >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
       retries: 10
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+    restart: unless-stopped
+    ports:
+      - "${CLIENT_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  admin:
+    build:
+      context: ./admin
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT:-8081}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   college_postgres_data:

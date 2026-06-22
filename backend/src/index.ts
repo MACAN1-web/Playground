@@ -99,7 +99,10 @@ const safeFilenamePart = (value: string) => value.replace(/[\\/:*?"<>|]+/g, "_")
 const extractSpecialtyCode = (specialty: string) => specialty.match(/\d{2}\.\d{2}\.\d{2}/)?.[0] ?? safeFilenamePart(specialty).slice(0, 40);
 
 const ensureSchema = async () => {
-  const migration = await fs.readFile(path.resolve("src/migrations/001_initial.sql"), "utf8");
+  const sourcePath = path.resolve("src/migrations/001_initial.sql");
+  const buildPath = path.resolve("dist/migrations/001_initial.sql");
+  const migrationPath = await fs.access(sourcePath).then(() => sourcePath).catch(() => buildPath);
+  const migration = await fs.readFile(migrationPath, "utf8");
   await pool.query(migration);
 };
 
