@@ -3,6 +3,25 @@ const apiBaseUrl = import.meta.env.VITE_API_URL || "";
 
 const url = (path: string) => `${apiBaseUrl}${path}`;
 
+const loggedFetch = async (path: string, init: RequestInit = {}) => {
+  const requestUrl = url(path);
+  const method = init.method || "GET";
+  console.info("[admin-api] request", { method, url: requestUrl || path });
+  try {
+    const response = await fetch(requestUrl, init);
+    console.info("[admin-api] response", {
+      method,
+      url: requestUrl || path,
+      status: response.status,
+      contentType: response.headers.get("content-type")
+    });
+    return response;
+  } catch (error) {
+    console.error("[admin-api] network error", { method, url: requestUrl || path, error });
+    throw error;
+  }
+};
+
 type TokenGetter = () => string;
 type TokenSetter = (token: string) => void;
 
@@ -27,7 +46,7 @@ async function parse<T>(response: Response): Promise<T> {
 }
 
 const refreshAccessToken = async () => {
-  const data = await fetch(url("/api/auth/refresh"), { method: "POST", credentials: "include" }).then(parse<{ accessToken: string }>);
+  const data = await loggedFetch("/api/auth/refresh", { method: "POST", credentials: "include" }).then(parse<{ accessToken: string }>);
   setToken(data.accessToken);
   return data.accessToken;
 };
@@ -43,28 +62,28 @@ const withRefresh = async <T>(request: (token: string) => Promise<Response>) => 
 
 export const api = {
   get: <T>(path: string) =>
-    withRefresh<T>((token) => fetch(url(path), { headers: { Authorization: `Bearer ${token}` }, credentials: "include" })),
+    withRefresh<T>((token) => loggedFetch(path, { headers: { Authorization: `Bearer ${token}` }, credentials: "include" })),
   post: <T>(path: string, body: unknown, token?: string) =>
-    fetch(url(path), {
+    loggedFetch(path, {
       method: "POST",
       headers: { ...jsonHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(body),
       credentials: "include"
     }).then(parse<T>),
   patch: <T>(path: string, body: unknown) =>
-    withRefresh<T>((token) => fetch(url(path), {
+    withRefresh<T>((token) => loggedFetch(path, {
       method: "PATCH",
       headers: { ...jsonHeaders, Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
       credentials: "include"
     })),
   upload: <T>(path: string, body: FormData) =>
-    withRefresh<T>((token) => fetch(url(path), { method: "POST", headers: { Authorization: `Bearer ${token}` }, body, credentials: "include" })),
+    withRefresh<T>((token) => loggedFetch(path, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body, credentials: "include" })),
   download: async (path: string) => {
-    let response = await fetch(url(path), { headers: { Authorization: `Bearer ${getToken()}` }, credentials: "include" });
+    let response = await loggedFetch(path, { headers: { Authorization: `Bearer ${getToken()}` }, credentials: "include" });
     if (response.status === 401) {
       const newToken = await refreshAccessToken();
-      response = await fetch(url(path), { headers: { Authorization: `Bearer ${newToken}` }, credentials: "include" });
+      response = await loggedFetch(path, { headers: { Authorization: `Bearer ${newToken}` }, credentials: "include" });
     }
     if (!response.ok) {
       const contentType = response.headers.get("content-type") || "";
@@ -76,11 +95,14 @@ export const api = {
     return { blob: await response.blob(), filename };
   },
   delete: <T>(path: string, body: unknown) =>
-    withRefresh<T>((token) => fetch(url(path), {
+    withRefresh<T>((token) => loggedFetch(path, {
       method: "DELETE",
       headers: { ...jsonHeaders, Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
       credentials: "include"
     })),
-  eventSource: (path: string) => new EventSource(url(path), { withCredentials: true })
+  eventSource: (path: string) => {
+    console.info("[admin-api] event-source", { url: url(path) || path });
+    return new EventSource(url(path), { withCredentials: true });
+  }
 };

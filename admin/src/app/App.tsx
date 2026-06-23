@@ -149,6 +149,8 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
   const [placeDrafts, setPlaceDrafts] = useState<Record<number, { budgetPlaces: string; paidPlaces: string }>>({});
   const [placeStatuses, setPlaceStatuses] = useState<Record<number, { budgetPlaces?: string; paidPlaces?: string }>>({});
   const [adminRatingsView, setAdminRatingsView] = useState<"ratings" | "applicants">("ratings");
+  const [isExportingOriginals, setIsExportingOriginals] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
 
   useEffect(() => {
     configureAuthToken(
@@ -270,9 +272,12 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
     } catch (error) { setMessage((error as Error).message); }
   }
 
-  async function exportOriginals(directionId: number) {
+  async function exportAllOriginals() {
+    if (isExportingOriginals) return;
+    setIsExportingOriginals(true);
+    setExportMessage("Готовим файл...");
     try {
-      const { blob, filename } = await api.download(`/api/admin/directions/${directionId}/export-originals`);
+      const { blob, filename } = await api.download("/api/admin/export-originals");
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -280,9 +285,14 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
       document.body.append(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setExportMessage("Файл выгружен.");
       setMessage("");
-    } catch (error) { setMessage((error as Error).message); }
+    } catch (error) {
+      setExportMessage((error as Error).message);
+    } finally {
+      setIsExportingOriginals(false);
+    }
   }
 
   function updatePlaceDraft(directionId: number, field: "budgetPlaces" | "paidPlaces", value: string) {
@@ -385,6 +395,10 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
             }}
           />
         </label>
+        <button className="quick-upload-button" type="button" disabled={isExportingOriginals} onClick={() => void exportAllOriginals()}>
+          {isExportingOriginals ? "Готовим файл..." : "Выгрузить оригиналы XLSX"}
+        </button>
+        {exportMessage && <span>{exportMessage}</span>}
       </div>
     </div>
     <div className="panel wide applicant-admin">
@@ -423,7 +437,6 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
             <label><span>Бюджет</span><input type="number" min="0" placeholder="0" value={placeDrafts[item.id]?.budgetPlaces ?? ""} onChange={(event) => updatePlaceDraft(item.id, "budgetPlaces", event.target.value)} /><em>{placeStatuses[item.id]?.budgetPlaces}</em></label>
             <label><span>Внебюджет</span><input type="number" min="0" placeholder="0" value={placeDrafts[item.id]?.paidPlaces ?? ""} onChange={(event) => updatePlaceDraft(item.id, "paidPlaces", event.target.value)} /><em>{placeStatuses[item.id]?.paidPlaces}</em></label>
           </div>
-          <button className="export-button" onClick={() => void exportOriginals(item.id)}>Выгрузить XLS</button>
         </div>
         {expandedDirectionId === item.id && <div className="expanded-rating">
           <div className="expanded-rating-head"><span>Место</span><span>Абитуриент</span><span className="score-cell">Средний балл</span><span>Первоочередное зачисление</span><span>Оригинал</span></div>

@@ -115,6 +115,7 @@ td strong { color: var(--blue-deep); }
 .quick-upload-actions span { color: #dbe9ff; font-size: var(--font-small); }
 .quick-upload-button { display: block; padding: 14px 18px; border-radius: 12px; color: var(--blue-deep); background: white; font-weight: 500; text-align: center; cursor: pointer; transition: background .18s ease, transform .18s ease; }
 .quick-upload-button:hover { background: var(--blue-soft); transform: translateY(-1px); }
+.quick-upload-button:disabled { opacity: .7; cursor: wait; transform: none; }
 .quick-upload-button.disabled { opacity: .55; cursor: not-allowed; transform: none; }
 .quick-upload-button input { display: none; }
 .applicant-admin { grid-column: 1 / -1; }
@@ -141,8 +142,6 @@ td strong { color: var(--blue-deep); }
 .places-form label span { color: var(--muted); font-size: var(--font-small); font-weight: 500; }
 .places-form input { width: 100%; padding: 9px 10px; border-radius: 10px; font-size: var(--font-small); text-align: center; }
 .places-form em { min-height: 18px; color: var(--blue-deep); font-size: 12px; font-style: normal; line-height: 1; text-align: center; }
-.export-button { align-self: center; padding: 10px 14px; background: white; color: var(--blue-deep); border: 1px solid #d7dfeb; font-size: var(--font-small); }
-.export-button:hover { background: #eaf2fe; color: var(--blue-deep); box-shadow: none; }
 .expanded-rating { grid-column: 1 / -1; display: grid !important; gap: 0; margin-top: 4px; overflow: hidden; border: 1px solid #dce5f1; border-radius: 12px; background: white; }
 .expanded-rating-head, .expanded-rating-row { display: grid !important; grid-template-columns: 80px minmax(240px, 1fr) 130px 280px 170px; align-items: center; gap: 12px; padding: 11px 14px; }
 .expanded-rating-head { color: var(--muted); background: #eaf2fe; font-size: var(--font-small); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; }

@@ -1,16 +1,16 @@
 import cors from "cors";
 import ExcelJS from "exceljs";
-import express from "express";
-import fs from "node:fs/promises";
-import multer from "multer";
-import path from "node:path";
 import type { NextFunction, Request, Response } from "express";
+import express from "express";
+import multer from "multer";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { PoolClient } from "pg";
 import * as XLSX from "xlsx";
 import "./env.js";
+import { authRoutes } from "./modules/auth/auth.routes.js";
 import { maskSnils, normalizeSnils, pool, query, queryOne, transaction } from "./shared/db/db.js";
 import { requireAuth, requireRole } from "./shared/middlewares/auth.js";
-import { authRoutes } from "./modules/auth/auth.routes.js";
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -36,6 +36,24 @@ app.use((_request, response, next) => {
   response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
 });
+
+app.use((request, response, next) => {
+  if (!request.path.startsWith("/api")) return next();
+
+  const startedAt = Date.now();
+  response.on("finish", () => {
+    console.info("[backend-api]", {
+      method: request.method,
+      path: request.originalUrl,
+      status: response.statusCode,
+      durationMs: Date.now() - startedAt,
+      origin: request.headers.origin ?? null,
+      ip: request.ip
+    });
+  });
+  next();
+});
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
@@ -165,6 +183,92 @@ const rerankAllDirections = async () => {
     UPDATE applicants SET position = ranked.new_position
     FROM ranked WHERE applicants.id = ranked.id
   `);
+};
+
+type ExportDirection = {
+  id: number;
+  specialty: string;
+  budget_places: number | null;
+  paid_places: number | null;
+};
+
+type ExportApplicant = {
+  position: number;
+  full_name: string;
+  average_score: string;
+  priority_enrollment: boolean;
+};
+
+const createWorksheetName = (direction: ExportDirection, usedNames: Set<string>) => {
+  const baseName = extractSpecialtyCode(direction.specialty).slice(0, 31) || `Лист_${direction.id}`;
+  let worksheetName = baseName;
+  let index = 2;
+  while (usedNames.has(worksheetName)) {
+    const suffix = `_${index}`;
+    worksheetName = `${baseName.slice(0, 31 - suffix.length)}${suffix}`;
+    index += 1;
+  }
+  usedNames.add(worksheetName);
+  return worksheetName;
+};
+
+const addOriginalsWorksheet = (
+  workbook: ExcelJS.Workbook,
+  direction: ExportDirection,
+  applicants: ExportApplicant[],
+  worksheetName: string
+) => {
+  const budgetPlaces = direction.budget_places ?? 0;
+  const paidPlaces = direction.paid_places ?? 0;
+  const placesLimit = budgetPlaces + paidPlaces;
+  const exportedApplicants = applicants.slice(0, placesLimit);
+  const title = `${direction.specialty} (бюджет ${budgetPlaces} мест)`;
+  const worksheet = workbook.addWorksheet(worksheetName, { views: [{ showGridLines: false }] });
+  worksheet.columns = [
+    { width: 10 },
+    { width: Math.max(46, Math.ceil(title.length * 1.35)) },
+    { width: 28 }
+  ];
+  worksheet.getCell("B1").value = title;
+  worksheet.addRow([]);
+  worksheet.addRow(["", "ФИО", "Средний балл"]);
+  if (!applicants.length) {
+    worksheet.addRow(["", "Нет абитуриентов с оригиналом", ""]);
+  } else {
+    exportedApplicants.forEach((applicant, index) => {
+      worksheet.addRow([
+        index + 1,
+        applicant.full_name || "ФИО не указано",
+        applicant.priority_enrollment ? "Первоочередное зачисление" : applicant.average_score
+      ]);
+    });
+  }
+
+  const border: Partial<ExcelJS.Borders> = {
+    top: { style: "thin", color: { argb: "FFBFBFBF" } },
+    bottom: { style: "thin", color: { argb: "FFBFBFBF" } },
+    left: { style: "thin", color: { argb: "FFBFBFBF" } },
+    right: { style: "thin", color: { argb: "FFBFBFBF" } }
+  };
+  worksheet.eachRow((row, rowNumber) => {
+    row.height = rowNumber === 1 ? 24 : 22;
+    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      if (columnNumber > 3) return;
+      cell.font = { name: "Arial", size: rowNumber === 1 ? 14 : 12, bold: rowNumber === 1 || rowNumber === 3 };
+      if (!applicants.length && rowNumber === 4) {
+        cell.font = { name: "Arial", size: 12, italic: true };
+      }
+      cell.alignment = {
+        horizontal: rowNumber >= 4 && columnNumber === 2 ? "left" : "center",
+        vertical: "middle",
+        wrapText: rowNumber !== 1
+      };
+      cell.border = border;
+      if (rowNumber >= 4 && rowNumber - 3 > budgetPlaces) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
+      }
+    });
+  });
 };
 
 const findHeaderIndex = (headers: unknown[], variants: string[]) =>
@@ -439,23 +543,13 @@ app.post("/api/admin/directions/:id/places", rateLimit("admin-write", 240, 60_00
 app.patch("/api/admin/directions/:id/places", rateLimit("admin-write", 240, 60_000), requireAuth, requireRole("admin"), updateDirectionPlaces);
 
 app.get("/api/admin/directions/:id/export-originals", rateLimit("admin-export", 60, 60_000), requireAuth, requireRole("admin"), async (request, response) => {
-  const direction = await queryOne<{
-    id: number;
-    specialty: string;
-    budget_places: number | null;
-    paid_places: number | null;
-  }>(
+  const direction = await queryOne<ExportDirection>(
     "SELECT id, specialty, budget_places, paid_places FROM directions WHERE id = $1",
     [request.params.id]
   );
   if (!direction) return response.status(404).json({ error: "Специальность не найдена" });
 
-  const applicants = await query<{
-    position: number;
-    full_name: string;
-    average_score: string;
-    priority_enrollment: boolean;
-  }>(
+  const applicants = await query<ExportApplicant>(
     `SELECT position, full_name, average_score, priority_enrollment
      FROM applicants
      WHERE direction_id = $1 AND original_provided = TRUE
@@ -472,51 +566,57 @@ app.get("/api/admin/directions/:id/export-originals", rateLimit("admin-export", 
   if (placesLimit <= 0) {
     return response.status(400).json({ error: "Заполните количество бюджетных или внебюджетных мест" });
   }
-  const exportedApplicants = placesLimit > 0 ? applicants.slice(0, placesLimit) : applicants;
-  const title = `${direction.specialty} (бюджет ${budgetPlaces} мест)`;
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Оригиналы", { views: [{ showGridLines: false }] });
-  worksheet.columns = [
-    { width: 10 },
-    { width: Math.max(46, Math.ceil(title.length * 1.35)) },
-    { width: 28 }
-  ];
-  worksheet.getCell("B1").value = title;
-  worksheet.addRow([]);
-  worksheet.addRow(["", "ФИО", "Средний балл"]);
-  exportedApplicants.forEach((applicant, index) => {
-    worksheet.addRow([
-      index + 1,
-      applicant.full_name || "ФИО не указано",
-      applicant.priority_enrollment ? "Первоочередное зачисление" : applicant.average_score
-    ]);
-  });
-
-  const border: Partial<ExcelJS.Borders> = {
-    top: { style: "thin", color: { argb: "FFBFBFBF" } },
-    bottom: { style: "thin", color: { argb: "FFBFBFBF" } },
-    left: { style: "thin", color: { argb: "FFBFBFBF" } },
-    right: { style: "thin", color: { argb: "FFBFBFBF" } }
-  };
-  worksheet.eachRow((row, rowNumber) => {
-    row.height = rowNumber === 1 ? 24 : 22;
-    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      if (columnNumber > 3) return;
-      cell.font = { name: "Arial", size: rowNumber === 1 ? 14 : 12, bold: rowNumber === 1 || rowNumber === 3 };
-      cell.alignment = {
-        horizontal: rowNumber >= 4 && columnNumber === 2 ? "left" : "center",
-        vertical: "middle",
-        wrapText: rowNumber !== 1
-      };
-      cell.border = border;
-      if (rowNumber >= 4 && rowNumber - 3 > budgetPlaces) {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
-      }
-    });
-  });
+  addOriginalsWorksheet(workbook, direction, applicants, "Оригиналы");
 
   const buffer = await workbook.xlsx.writeBuffer();
   const filename = `Оригиналы_аттестатов_${extractSpecialtyCode(direction.specialty)}.xlsx`;
+  response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  response.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  response.send(buffer);
+});
+
+app.get("/api/admin/export-originals", rateLimit("admin-export", 60, 60_000), requireAuth, requireRole("admin"), async (_request, response) => {
+  const directions = await query<ExportDirection>(`
+    SELECT d.id, d.specialty, d.budget_places, d.paid_places
+    FROM directions d
+    ORDER BY d.specialty, d.study_form
+  `);
+  if (!directions.length) {
+    return response.status(400).json({ error: "Нет опубликованных специальностей для выгрузки" });
+  }
+
+  const applicantsByDirection = new Map<number, ExportApplicant[]>();
+  for (const direction of directions) {
+    const applicants = await query<ExportApplicant>(
+      `SELECT position, full_name, average_score, priority_enrollment
+       FROM applicants
+       WHERE direction_id = $1 AND original_provided = TRUE
+      ORDER BY position`,
+      [direction.id]
+    );
+    applicantsByDirection.set(direction.id, applicants);
+  }
+
+  const directionsWithoutPlaces = directions.filter((direction) => {
+    const applicants = applicantsByDirection.get(direction.id) ?? [];
+    return applicants.length > 0 && (direction.budget_places ?? 0) + (direction.paid_places ?? 0) <= 0;
+  });
+  if (directionsWithoutPlaces.length) {
+    return response.status(400).json({
+      error: `Заполните количество бюджетных или внебюджетных мест: ${directionsWithoutPlaces.map((direction) => direction.specialty).join(", ")}`
+    });
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  const usedWorksheetNames = new Set<string>();
+  for (const direction of directions) {
+    const applicants = applicantsByDirection.get(direction.id) ?? [];
+    addOriginalsWorksheet(workbook, direction, applicants, createWorksheetName(direction, usedWorksheetNames));
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const filename = "Оригиналы_аттестатов_все_специальности.xlsx";
   response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   response.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
   response.send(buffer);
