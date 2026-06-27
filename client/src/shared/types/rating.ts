@@ -14,6 +14,7 @@ export type Applicant = {
   averageScore: number | string;
   originalProvided: boolean;
   priorityEnrollment: boolean;
+  fundingType: "Бюджет" | "Внебюджет";
 };
 
 export type SearchResult = {
@@ -28,6 +29,7 @@ export type SearchResult = {
   average_score: number | string;
   originalProvided: boolean;
   priorityEnrollment: boolean;
+  fundingType: "Бюджет" | "Внебюджет";
 };
 
 export type AdminApplicant = {
@@ -37,6 +39,7 @@ export type AdminApplicant = {
   snilsNormalized: string;
   originalProvided: boolean;
   priorityEnrollment: boolean;
+  fundingType: "Бюджет" | "Внебюджет";
   position: number;
   averageScore: number | string;
   specialty: string;

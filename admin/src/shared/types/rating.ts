@@ -14,6 +14,7 @@ export type Applicant = {
   averageScore: number | string;
   originalProvided: boolean;
   priorityEnrollment: boolean;
+  fundingType: "Бюджет" | "Внебюджет";
 };
 
 export type SearchResult = {
@@ -28,6 +29,7 @@ export type SearchResult = {
   average_score: number | string;
   originalProvided: boolean;
   priorityEnrollment: boolean;
+  fundingType: "Бюджет" | "Внебюджет";
 };
 
 export type AdminApplicant = {
@@ -37,6 +39,7 @@ export type AdminApplicant = {
   snilsNormalized: string;
   originalProvided: boolean;
   priorityEnrollment: boolean;
+  fundingType: "Бюджет" | "Внебюджет";
   position: number;
   averageScore: number | string;
   specialty: string;
@@ -44,3 +47,25 @@ export type AdminApplicant = {
 };
 
 export type AdminDirectionApplicant = Omit<AdminApplicant, "specialty" | "studyForm">;
+
+export type ReportCategory = "budget_9" | "paid_9_fulltime" | "paid_9_parttime" | "paid_11_distance";
+
+export type ReportDirection = {
+  directionId: number;
+  specialty: string;
+  studyForm: string;
+  budgetPlaces: number | null;
+  paidPlaces: number | null;
+  applicationsCount: number;
+  originalsCount: number;
+  priorityCount: number;
+};
+
+export type AdminReport = {
+  date: string;
+  category: ReportCategory;
+  title: string;
+  totalApplications: number;
+  categoryApplications: Record<ReportCategory, number>;
+  directions: ReportDirection[];
+};

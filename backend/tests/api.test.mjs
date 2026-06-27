@@ -63,8 +63,8 @@ const createWorkbook = () => {
     { "Специальность": "Первая специальность", "Форма обучения": "Очная", "Фамилия абитуриента": "Иванов", "Имя абитуриента": "Иван", "Отчество абитуриента": "Иванович", "СНИЛС абитуриента": "901-000-000 01", "Средний балл аттестата": 4.2, "Статус заявления": "Отклонено" },
     { "Специальность": "Первая специальность", "Форма обучения": "Очная", "Фамилия абитуриента": "Петров", "Имя абитуриента": "Пётр", "Отчество абитуриента": "Петрович", "СНИЛС абитуриента": "901-000-000 02", "Средний балл аттестата": 4.3, "Статус заявления": "Рекомендован" },
     { "Специальность": "Первая специальность", "Форма обучения": "Очная", "Фамилия абитуриента": "Сидоров", "Имя абитуриента": "Сидор", "Отчество абитуриента": "Сидорович", "СНИЛС абитуриента": "901-000-000 03", "Средний балл аттестата": 4.8, "Статус заявления": "Рекомендован" },
-    { "Специальность": "Первая специальность", "Форма обучения": "Заочная", "Фамилия абитуриента": "Заочников", "Имя абитуриента": "Захар", "Отчество абитуриента": "Захарович", "СНИЛС абитуриента": "901-000-000 04", "Средний балл аттестата": 4.9, "Статус заявления": "Рекомендован" },
-    { "Специальность": "Первая специальность", "Форма обучения": "очно-заочная", "Фамилия абитуриента": "Вечеров", "Имя абитуриента": "Виктор", "Отчество абитуриента": "Викторович", "СНИЛС абитуриента": "901-000-000 05", "Средний балл аттестата": 4.7, "Статус заявления": "Рекомендован" },
+    { "Специальность": "Первая специальность", "Форма обучения": "Заочная", "Тип финансирования": "Внебюджет", "Базовое образование": "11 классов", "Фамилия абитуриента": "Заочников", "Имя абитуриента": "Захар", "Отчество абитуриента": "Захарович", "СНИЛС абитуриента": "901-000-000 04", "Средний балл аттестата": 4.9, "Статус заявления": "Рекомендован" },
+    { "Специальность": "Первая специальность", "Форма обучения": "очно-заочная", "Тип финансирования": "Внебюджет", "Базовое образование": "9 классов", "Фамилия абитуриента": "Вечеров", "Имя абитуриента": "Виктор", "Отчество абитуриента": "Викторович", "СНИЛС абитуриента": "901-000-000 05", "Средний балл аттестата": 4.7, "Статус заявления": "Рекомендован" },
     { "Специальность": "Вторая специальность", "Форма обучения": "Очная", "Фамилия абитуриента": "Иванов", "Имя абитуриента": "Иван", "Отчество абитуриента": "Иванович", "СНИЛС абитуриента": "901-000-000 01", "Средний балл аттестата": 4.5, "Статус заявления": "Рекомендован" }
   ]);
   XLSX.utils.book_append_sheet(registry, registrySheet, "Реестр");
@@ -342,7 +342,7 @@ test("распределяет одного абитуриента по неск
     headers: { Authorization: `Bearer ${login.body.accessToken}` },
     body: form
   });
-  assert.deepEqual(imported.body, { importedSheets: 4, importedApplicants: 6, skippedRows: 0, mergedDuplicates: 1 });
+  assert.deepEqual(imported.body, { importedSheets: 4, importedApplicants: 6, skippedRows: 1, mergedDuplicates: 0 });
 
   const search = await request("/api/search", {
     method: "POST",
@@ -488,6 +488,34 @@ test("ищет по ФИО и применяет приоритеты зачис
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.body.accessToken}` },
     body: JSON.stringify({ budgetPlaces: 1, paidPlaces: 5 })
   });
+  const reportDate = new Date().toISOString().slice(0, 10);
+  const report = await request(`/api/admin/report?date=${reportDate}&category=budget_9`, {
+    headers: { Authorization: `Bearer ${login.body.accessToken}` }
+  });
+  const reportDirection = report.body.directions.find((item) => item.directionId === firstDirection.id);
+  assert.equal(report.response.status, 200);
+  assert.equal(report.body.title, "Бюджет на базе 9 класса");
+  assert.equal(report.body.totalApplications, 6);
+  assert.equal(report.body.categoryApplications.budget_9, 4);
+  assert.equal(report.body.categoryApplications.paid_9_parttime, 1);
+  assert.equal(report.body.categoryApplications.paid_11_distance, 1);
+  assert.equal(reportDirection.applicationsCount, 3);
+  assert.equal(reportDirection.originalsCount, 2);
+  assert.equal(reportDirection.priorityCount, 1);
+
+  const parttimeReport = await request(`/api/admin/report?date=${reportDate}&category=paid_9_parttime`, {
+    headers: { Authorization: `Bearer ${login.body.accessToken}` }
+  });
+  assert.equal(parttimeReport.response.status, 200);
+  assert.equal(parttimeReport.body.directions[0].studyForm, "Очно-заочная");
+  assert.equal(parttimeReport.body.directions[0].applicationsCount, 1);
+
+  const distanceReport = await request(`/api/admin/report?date=${reportDate}&category=paid_11_distance`, {
+    headers: { Authorization: `Bearer ${login.body.accessToken}` }
+  });
+  assert.equal(distanceReport.response.status, 200);
+  assert.equal(distanceReport.body.directions[0].studyForm, "Заочная");
+  assert.equal(distanceReport.body.directions[0].applicationsCount, 1);
 
   const exportResponse = await fetch(`${baseUrl}/api/admin/directions/${firstDirection.id}/export-originals`, {
     headers: { Authorization: `Bearer ${login.body.accessToken}` }
@@ -497,28 +525,18 @@ test("ищет по ФИО и применяет приоритеты зачис
   const exportedWorkbook = new ExcelJS.Workbook();
   await exportedWorkbook.xlsx.load(await exportResponse.arrayBuffer());
   const exportedSheet = exportedWorkbook.getWorksheet("Оригиналы");
-  const exportedRows = [
-    [exportedSheet.getCell("A1").value || "", exportedSheet.getCell("B1").value || ""],
-    [],
-    [exportedSheet.getCell("A3").value || "", exportedSheet.getCell("B3").value, exportedSheet.getCell("C3").value],
-    [exportedSheet.getCell("A4").value, exportedSheet.getCell("B4").value, exportedSheet.getCell("C4").value],
-    exportedSheet.getCell("A5").value ? [exportedSheet.getCell("A5").value] : undefined
-  ];
-  assert.equal(exportedRows[0][0], "");
-  assert.match(exportedRows[0][1], /Первая специальность \(бюджет 1 мест\)/);
-  assert.deepEqual(exportedRows[2], ["", "ФИО", "Средний балл"]);
-  assert.deepEqual(exportedRows[3], [1, "Сидоров Сидор Сидорович", "Первоочередное зачисление"]);
-  assert.deepEqual(exportedRows[4], [2]);
-  assert.notEqual(exportedSheet.getCell("B1").alignment.wrapText, true);
-  assert.equal(exportedSheet.getCell("C1").isMerged, false);
-  assert.ok(exportedSheet.getColumn(2).width >= Math.ceil(String(exportedSheet.getCell("B1").value).length * 1.35));
-  assert.equal(exportedSheet.getCell("B3").alignment.horizontal, "center");
-  assert.equal(exportedSheet.getCell("B4").alignment.horizontal, "left");
-  assert.notEqual(exportedSheet.getCell("B1").fill.fgColor?.argb, "FFD9EAF7");
-  assert.notEqual(exportedSheet.getCell("B3").fill.fgColor?.argb, "FFD9EAF7");
+  assert.match(String(exportedSheet.getCell("A1").value), /Первая специальность — Бюджет \(1 мест\)/);
+  assert.match(String(exportedSheet.getCell("E1").value), /Первая специальность — Внебюджет \(5 мест\)/);
+  assert.deepEqual([exportedSheet.getCell("A3").value || "", exportedSheet.getCell("B3").value, exportedSheet.getCell("C3").value], ["", "ФИО", "Средний балл"]);
+  assert.deepEqual([exportedSheet.getCell("E3").value || "", exportedSheet.getCell("F3").value, exportedSheet.getCell("G3").value], ["", "ФИО", "Средний балл"]);
+  assert.deepEqual([exportedSheet.getCell("A4").value, exportedSheet.getCell("B4").value, exportedSheet.getCell("C4").value], [1, "Сидоров Сидор Сидорович", "Первоочередное зачисление"]);
+  assert.deepEqual([exportedSheet.getCell("A5").value, exportedSheet.getCell("B5").value], [2, "Петров Пётр Петрович"]);
   assert.equal(exportedSheet.getCell("A5").fill.fgColor.argb, "FFFFF2CC");
   assert.equal(exportedSheet.getCell("B5").fill.fgColor.argb, "FFFFF2CC");
   assert.equal(exportedSheet.getCell("C5").fill.fgColor.argb, "FFFFF2CC");
+  assert.equal(exportedSheet.getCell("F4").value, "Нет абитуриентов с оригиналом");
+  assert.equal(exportedSheet.getCell("B4").alignment.horizontal, "left");
+  assert.equal(exportedSheet.getCell("F4").alignment.horizontal, "left");
 
   await request(`/api/admin/directions/${firstDirection.id}/places`, {
     method: "PATCH",
@@ -532,9 +550,12 @@ test("ищет по ФИО и применяет приоритеты зачис
   const paidOnlyWorkbook = new ExcelJS.Workbook();
   await paidOnlyWorkbook.xlsx.load(await paidOnlyExportResponse.arrayBuffer());
   const paidOnlySheet = paidOnlyWorkbook.getWorksheet("Оригиналы");
+  assert.equal(paidOnlySheet.getCell("A4").value, 1);
+  assert.equal(paidOnlySheet.getCell("B4").value, "Сидоров Сидор Сидорович");
   assert.equal(paidOnlySheet.getCell("A4").fill.fgColor.argb, "FFFFF2CC");
   assert.equal(paidOnlySheet.getCell("B4").fill.fgColor.argb, "FFFFF2CC");
   assert.equal(paidOnlySheet.getCell("C4").fill.fgColor.argb, "FFFFF2CC");
+  assert.equal(paidOnlySheet.getCell("F4").value, "Нет абитуриентов с оригиналом");
 });
 
 test("ищет абитуриентов по части названия и коду специальности", async () => {

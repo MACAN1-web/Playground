@@ -42,6 +42,7 @@ export function SearchPage() {
             <div className="result-meta">
               <span className="muted">Обновлено: {formatDate(result.updated_at)}</span>
               <span className={result.originalProvided ? "badge original-status active" : "badge original-status"}>{result.originalProvided ? "✓ Оригинал принесён" : "× Оригинал не принесён"}</span>
+              {result.fundingType === "Внебюджет" && <span className="badge funding-status">внебюджет</span>}
             </div>
             <div className="stats">
               <div><strong>#{result.position}</strong><span>место</span></div>

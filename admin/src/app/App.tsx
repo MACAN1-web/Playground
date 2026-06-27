@@ -1,8 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, configureAuthToken } from "../shared/api/client";
-import type { AdminApplicant, AdminDirectionApplicant, Applicant, Direction, SearchResult } from "../shared/types/rating";
+import type { AdminApplicant, AdminDirectionApplicant, AdminReport, Applicant, Direction, ReportCategory, SearchResult } from "../shared/types/rating";
 import { LoginPage } from "../pages/LoginPage/LoginPage";
 import { AdminHeader } from "../widgets/Header/AdminHeader";
+
+const reportCategories: { key: ReportCategory; title: string }[] = [
+  { key: "budget_9", title: "Бюджет на базе 9 класса" },
+  { key: "paid_9_fulltime", title: "Внебюджет на базе 9 класса очно" },
+  { key: "paid_9_parttime", title: "Внебюджет на базе 9 класса очно-заочно" },
+  { key: "paid_11_distance", title: "Внебюджет на базе 11 класса заочно" }
+];
+
+const todayInputValue = () => {
+  const date = new Date();
+  const part = (number: number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}`;
+};
 
 const formatDate = (value: string | null) => {
   if (!value) return "ещё не опубликован";
@@ -33,6 +46,18 @@ const splitSpecialty = (specialty: string) => {
   const match = specialty.match(/^(\d{2}\.\d{2}\.\d{2})\s+(.+)$/);
   if (!match) return { code: "", title: specialty };
   return { code: match[1], title: match[2] };
+};
+
+const isFundingChangeBlocked = <T extends { directionId?: number; snilsNormalized: string; fundingType: "Бюджет" | "Внебюджет" }>(items: T[], item: T, paidOnly: boolean, fallbackDirectionId?: number | null) => {
+  const nextFundingType = paidOnly ? "Внебюджет" : "Бюджет";
+  if (nextFundingType === item.fundingType) return false;
+
+  const directionId = item.directionId ?? fallbackDirectionId;
+  return items.some((candidate) =>
+    (candidate.directionId ?? fallbackDirectionId) === directionId &&
+    candidate.snilsNormalized === item.snilsNormalized &&
+    candidate.fundingType === nextFundingType
+  );
 };
 
 function SearchTab() {
@@ -90,7 +115,14 @@ function ListsTab({ directions }: { directions: Direction[] }) {
   const [selected, setSelected] = useState<number | null>(directions[0]?.id ?? null);
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [manuallyClosed, setManuallyClosed] = useState(false);
+  const [fundingFilter, setFundingFilter] = useState<"Бюджет" | "Внебюджет">("Бюджет");
   const direction = directions.find((item) => item.id === selected);
+  const budgetCount = useMemo(() => applicants.filter((item) => item.fundingType !== "Внебюджет").length, [applicants]);
+  const paidCount = applicants.length - budgetCount;
+  const filteredApplicants = useMemo(
+    () => applicants.filter((item) => fundingFilter === "Внебюджет" ? item.fundingType === "Внебюджет" : item.fundingType !== "Внебюджет"),
+    [applicants, fundingFilter]
+  );
 
   useEffect(() => {
     if (selected === null && directions.length && !manuallyClosed) setSelected(directions[0].id);
@@ -107,10 +139,15 @@ function ListsTab({ directions }: { directions: Direction[] }) {
     <div className="meta">
       <span>Обновлено: {formatDate(direction.updated_at)}</span>
     </div>
+    <div className="funding-tabs" aria-label="Тип рейтинга">
+      <button className={fundingFilter === "Бюджет" ? "active" : ""} type="button" onClick={() => setFundingFilter("Бюджет")}>Бюджет <span>{budgetCount}</span></button>
+      <button className={fundingFilter === "Внебюджет" ? "active" : ""} type="button" onClick={() => setFundingFilter("Внебюджет")}>Внебюджет <span>{paidCount}</span></button>
+    </div>
     <div className="table-wrap"><table>
-      <thead><tr><th>Место</th><th className="snils-cell">СНИЛС</th><th className="score-cell">Средний балл</th><th>Оригинал</th></tr></thead>
-      <tbody>{applicants.map((item) => <tr key={`${item.position}-${item.snils}`}><td><strong>{item.position}</strong></td><td className="snils-cell">{item.snils}</td><td className="score-cell">{item.averageScore}</td><td><span className={item.originalProvided ? "original-mark active" : "original-mark"} title={item.originalProvided ? "Оригинал принесён" : "Оригинал не принесён"}>{item.originalProvided ? "✓" : "×"}</span></td></tr>)}</tbody>
+      <thead><tr><th>Место</th><th className="snils-cell">СНИЛС</th><th className="score-cell">Средний балл</th><th className="funding-cell">Тип</th><th>Оригинал</th></tr></thead>
+      <tbody>{filteredApplicants.map((item, index) => <tr key={`${item.position}-${item.snils}-${item.fundingType}`}><td><strong>{index + 1}</strong></td><td className="snils-cell">{item.snils}</td><td className="score-cell">{item.averageScore}</td><td className="funding-cell"><span className={item.fundingType === "Внебюджет" ? "funding-pill" : "funding-pill quiet"}>{item.fundingType === "Внебюджет" ? "внебюджет" : "бюджет"}</span></td><td><span className={item.originalProvided ? "original-mark active" : "original-mark"} title={item.originalProvided ? "Оригинал принесён" : "Оригинал не принесён"}>{item.originalProvided ? "✓" : "×"}</span></td></tr>)}</tbody>
     </table></div>
+    {!filteredApplicants.length && <p className="empty-filter">В этом списке пока нет абитуриентов.</p>}
   </div> : <div className="table-panel"><p>Выберите направление.</p></div>;
 
   return <section className="list-layout">
@@ -148,9 +185,13 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
   const [directionApplicants, setDirectionApplicants] = useState<AdminDirectionApplicant[]>([]);
   const [placeDrafts, setPlaceDrafts] = useState<Record<number, { budgetPlaces: string; paidPlaces: string }>>({});
   const [placeStatuses, setPlaceStatuses] = useState<Record<number, { budgetPlaces?: string; paidPlaces?: string }>>({});
-  const [adminRatingsView, setAdminRatingsView] = useState<"ratings" | "applicants">("ratings");
+  const [adminRatingsView, setAdminRatingsView] = useState<"ratings" | "applicants" | "report">("ratings");
   const [isExportingOriginals, setIsExportingOriginals] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
+  const [reportDate, setReportDate] = useState(todayInputValue());
+  const [reportCategory, setReportCategory] = useState<ReportCategory>("budget_9");
+  const [report, setReport] = useState<AdminReport | null>(null);
+  const [reportMessage, setReportMessage] = useState("");
 
   useEffect(() => {
     configureAuthToken(
@@ -200,6 +241,11 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
       }
     ])));
   }, [directions]);
+
+  useEffect(() => {
+    if (!token || adminRatingsView !== "report") return;
+    void loadReport();
+  }, [token, adminRatingsView, reportDate, reportCategory]);
 
   useEffect(() => {
     if (!token) return;
@@ -306,7 +352,15 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
   useEffect(() => {
     if (!token) return;
     const events = api.eventSource("/api/events");
-    const syncAdminData = () => {
+    const syncAdminData = (event: Event) => {
+      let reason = "";
+      try {
+        reason = JSON.parse((event as MessageEvent<string>).data || "{}").reason ?? "";
+      } catch {
+        reason = "";
+      }
+      if (reason === "original" || reason === "priority") return;
+
       void keepScrollPosition(async () => {
         if (adminQuery) await searchAdminApplicants();
         if (expandedDirectionId) await loadDirectionApplicants(expandedDirectionId, true);
@@ -325,30 +379,41 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
     } catch (error) { setMessage((error as Error).message); }
   }
 
-  async function setOriginal(directionId: number, snils: string, originalProvided: boolean) {
+  async function setOriginal(directionId: number, snils: string, fundingType: "Бюджет" | "Внебюджет", originalProvided: boolean) {
     try {
-      await api.patch(`/api/admin/applicants/${snils}/original`, { directionId, originalProvided });
+      await api.patch(`/api/admin/applicants/${snils}/original`, { directionId, fundingType, originalProvided });
       setAdminApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils
-        ? { ...applicant, originalProvided: originalProvided && applicant.directionId === directionId }
+        ? { ...applicant, originalProvided: originalProvided && applicant.directionId === directionId && applicant.fundingType === fundingType }
         : applicant));
       setDirectionApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils
-        ? { ...applicant, originalProvided: originalProvided && expandedDirectionId === directionId }
+        ? { ...applicant, originalProvided: originalProvided && expandedDirectionId === directionId && applicant.fundingType === fundingType }
         : applicant));
-      await keepScrollPosition(async () => {
-        if (adminQuery) await searchAdminApplicants();
-        if (expandedDirectionId) await loadDirectionApplicants(expandedDirectionId, true);
-      });
+      setMessage("");
     } catch (error) { setMessage((error as Error).message); }
   }
 
-  async function setPriorityEnrollment(directionId: number, snils: string, priorityEnrollment: boolean) {
+  async function setPriorityEnrollment(directionId: number, snils: string, fundingType: "Бюджет" | "Внебюджет", priorityEnrollment: boolean) {
     try {
-      await api.patch(`/api/admin/applicants/${snils}/priority`, { directionId, priorityEnrollment });
-      setAdminApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils && applicant.directionId === directionId
+      await api.patch(`/api/admin/applicants/${snils}/priority`, { directionId, fundingType, priorityEnrollment });
+      setAdminApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils && applicant.directionId === directionId && applicant.fundingType === fundingType
         ? { ...applicant, priorityEnrollment }
         : applicant));
-      setDirectionApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils
+      setDirectionApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils && applicant.fundingType === fundingType
         ? { ...applicant, priorityEnrollment }
+        : applicant));
+      setMessage("");
+    } catch (error) { setMessage((error as Error).message); }
+  }
+
+  async function setFundingType(directionId: number, snils: string, currentFundingType: "Бюджет" | "Внебюджет", paidOnly: boolean) {
+    const fundingType = paidOnly ? "Внебюджет" : "Бюджет";
+    try {
+      await api.patch(`/api/admin/applicants/${snils}/funding`, { directionId, currentFundingType, paidOnly });
+      setAdminApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils && applicant.directionId === directionId && applicant.fundingType === currentFundingType
+        ? { ...applicant, fundingType }
+        : applicant));
+      setDirectionApplicants((current) => current.map((applicant) => applicant.snilsNormalized === snils && applicant.fundingType === currentFundingType
+        ? { ...applicant, fundingType }
         : applicant));
       await keepScrollPosition(async () => {
         if (adminQuery) await searchAdminApplicants();
@@ -370,8 +435,28 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
     } catch (error) { setMessage((error as Error).message); }
   }
 
+  async function loadReport() {
+    try {
+      const data = await api.get<AdminReport>(`/api/admin/report?date=${encodeURIComponent(reportDate)}&category=${encodeURIComponent(reportCategory)}`);
+      setReport(data);
+      setReportMessage("");
+    } catch (error) {
+      setReport(null);
+      setReportMessage((error as Error).message);
+    }
+  }
+
   if (authChecking) return <section className="admin-grid"><div className="panel wide"><p className="message">Проверяем сессию администратора...</p></div></section>;
   if (!token) return <LoginPage email={email} password={password} message={message} onEmailChange={setEmail} onPasswordChange={setPassword} onSubmit={login} />;
+
+  const reportTotals = report?.directions.reduce(
+    (totals, item) => ({
+      applicationsCount: totals.applicationsCount + item.applicationsCount,
+      originalsCount: totals.originalsCount + item.originalsCount,
+      priorityCount: totals.priorityCount + item.priorityCount
+    }),
+    { applicationsCount: 0, originalsCount: 0, priorityCount: 0 }
+  );
 
   return <section className="admin-grid">
     <div className="admin-session">
@@ -409,11 +494,19 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
         <button>Найти</button>
       </form>
       {message && <p className="message">{message}</p>}
-      <div className="admin-applicants">{adminApplicants.map((applicant) => <div className="applicant-row" key={`${applicant.directionId}-${applicant.snilsNormalized}`}>
+      <div className="admin-applicants">{adminApplicants.map((applicant) => <div className="applicant-row" key={`${applicant.directionId}-${applicant.snilsNormalized}-${applicant.fundingType}`}>
         <div><strong>{applicant.fullName || "ФИО не указано"}</strong><span>{applicant.snils} · {applicant.specialty} · место {applicant.position} · балл {applicant.averageScore}</span></div>
         <div className="admin-checks">
-          <label className="original-check"><input type="checkbox" checked={applicant.priorityEnrollment} onChange={(event) => void setPriorityEnrollment(applicant.directionId, applicant.snilsNormalized, event.target.checked)} /><span>Первоочередное зачисление</span></label>
-          <label className="original-check"><input type="checkbox" checked={applicant.originalProvided} onChange={(event) => void setOriginal(applicant.directionId, applicant.snilsNormalized, event.target.checked)} /><span>Оригинал предоставлен</span></label>
+          <label className="original-check"><input type="checkbox" checked={applicant.priorityEnrollment} onChange={(event) => void setPriorityEnrollment(applicant.directionId, applicant.snilsNormalized, applicant.fundingType, event.target.checked)} /><span>Первоочередное зачисление</span></label>
+          <label className="original-check paid-check" title="Ручной признак внебюджета"><input type="checkbox" checked={applicant.fundingType === "Внебюджет"} onChange={(event) => {
+            if (isFundingChangeBlocked(adminApplicants, applicant, event.target.checked)) {
+              event.preventDefault();
+              setMessage("У абитуриента уже есть отдельные строки бюджета и внебюджета по этой специальности.");
+              return;
+            }
+            void setFundingType(applicant.directionId, applicant.snilsNormalized, applicant.fundingType, event.target.checked);
+          }} /><span>Внебюджет</span></label>
+          <label className="original-check"><input type="checkbox" checked={applicant.originalProvided} onChange={(event) => void setOriginal(applicant.directionId, applicant.snilsNormalized, applicant.fundingType, event.target.checked)} /><span>Оригинал предоставлен</span></label>
         </div>
       </div>)}</div>
     </div>
@@ -423,12 +516,14 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
           <div className="admin-tabs">
             <button className={adminRatingsView === "ratings" ? "active" : ""} onClick={() => setAdminRatingsView("ratings")}>Учёт оригиналов</button>
             <button className={adminRatingsView === "applicants" ? "active" : ""} onClick={() => setAdminRatingsView("applicants")}>Список абитуриентов</button>
+            <button className={adminRatingsView === "report" ? "active" : ""} onClick={() => setAdminRatingsView("report")}>Отчёт</button>
           </div>
           {adminRatingsView === "ratings" && <p className="muted">Нажмите на специальность, чтобы раскрыть внутренний рейтинг и отметить оригиналы документов.</p>}
+          {adminRatingsView === "report" && <p className="muted">Выберите дату и категорию, чтобы посмотреть статистику по специальностям.</p>}
         </div>
         {adminRatingsView === "ratings" && !!directions.length && <button className="danger" onClick={removeAllDirections}>Удалить все специальности</button>}
       </div>
-      {adminRatingsView === "ratings" ? <div className="admin-directions">{directions.map((item) => <div className="admin-row" key={item.id}>
+      {adminRatingsView === "ratings" && <div className="admin-directions">{directions.map((item) => <div className="admin-row" key={item.id}>
         <button className="direction-expand" onClick={() => void loadDirectionApplicants(item.id)}>
           <strong>{item.specialty}</strong><span>{formatStudyFormWithPlaces(item)} · {item.applicant_count} записей</span>
         </button>
@@ -439,16 +534,57 @@ function Admin({ directions, refresh }: { directions: Direction[]; refresh: () =
           </div>
         </div>
         {expandedDirectionId === item.id && <div className="expanded-rating">
-          <div className="expanded-rating-head"><span>Место</span><span>Абитуриент</span><span className="score-cell">Средний балл</span><span>Первоочередное зачисление</span><span>Оригинал</span></div>
-          {directionApplicants.map((applicant) => <div className="expanded-rating-row" key={`${expandedDirectionId}-${applicant.snilsNormalized}`}>
+          <div className="expanded-rating-head"><span>Место</span><span>Абитуриент</span><span className="score-cell">Средний балл</span><span>Первоочередное зачисление</span><span className="funding-cell">Внебюджет</span><span>Оригинал</span></div>
+          {directionApplicants.map((applicant) => <div className="expanded-rating-row" key={`${expandedDirectionId}-${applicant.snilsNormalized}-${applicant.fundingType}`}>
             <strong>#{applicant.position}</strong>
             <div><strong>{applicant.fullName || "ФИО не указано"}</strong><span>{applicant.snils}</span></div>
             <strong className="score-cell">{applicant.averageScore}</strong>
-            <label className="original-check compact priority-check"><input type="checkbox" checked={applicant.priorityEnrollment} onChange={(event) => expandedDirectionId && void setPriorityEnrollment(expandedDirectionId, applicant.snilsNormalized, event.target.checked)} /><span>Первоочередное зачисление</span></label>
-            <label className="original-check compact"><input type="checkbox" checked={applicant.originalProvided} onChange={(event) => expandedDirectionId && void setOriginal(expandedDirectionId, applicant.snilsNormalized, event.target.checked)} /><span>Принесён</span></label>
+            <label className="original-check compact priority-check"><input type="checkbox" checked={applicant.priorityEnrollment} onChange={(event) => expandedDirectionId && void setPriorityEnrollment(expandedDirectionId, applicant.snilsNormalized, applicant.fundingType, event.target.checked)} /><span>Первоочередное зачисление</span></label>
+            <label className="original-check compact paid-check funding-cell" title="Ручной признак внебюджета"><input type="checkbox" checked={applicant.fundingType === "Внебюджет"} onChange={(event) => {
+              if (!expandedDirectionId) return;
+              if (isFundingChangeBlocked(directionApplicants, applicant, event.target.checked, expandedDirectionId)) {
+                event.preventDefault();
+                setMessage("У абитуриента уже есть отдельные строки бюджета и внебюджета по этой специальности.");
+                return;
+              }
+              void setFundingType(expandedDirectionId, applicant.snilsNormalized, applicant.fundingType, event.target.checked);
+            }} /><span>Внебюджет</span></label>
+            <label className="original-check compact"><input type="checkbox" checked={applicant.originalProvided} onChange={(event) => expandedDirectionId && void setOriginal(expandedDirectionId, applicant.snilsNormalized, applicant.fundingType, event.target.checked)} /><span>Принесён</span></label>
           </div>)}
         </div>}
-      </div>)}</div> : <div className="admin-public-list"><ListsTab directions={directions} /></div>}
+      </div>)}</div>}
+      {adminRatingsView === "applicants" && <div className="admin-public-list"><ListsTab directions={directions} /></div>}
+      {adminRatingsView === "report" && <div className="report-panel">
+        <div className="report-controls">
+          <label><span>Дата отчёта</span><input type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} /></label>
+          {report && <div className="report-summary">
+            <strong>Всего поданных заявлений: {report.totalApplications}</strong>
+            <div>
+              {reportCategories.map((category) => <span key={category.key}>{category.title}: {report.categoryApplications[category.key] ?? 0}</span>)}
+            </div>
+          </div>}
+        </div>
+        <div className="report-tabs">
+          {reportCategories.map((category) => <button key={category.key} className={reportCategory === category.key ? "active" : ""} onClick={() => setReportCategory(category.key)}>{category.title}</button>)}
+        </div>
+        {reportMessage && <p className="message">{reportMessage}</p>}
+        {report && <div className="report-table">
+          <div className="report-table-head"><span>Специальность</span><span>Подали заявление</span><span>Оригиналы</span><span>Первоочередные</span></div>
+          {report.directions.map((item) => <div className="report-table-row" key={item.directionId}>
+            <div><strong>{item.specialty}</strong><span>{item.studyForm} · бюджет: {item.budgetPlaces ?? 0} · внебюджет: {item.paidPlaces ?? 0}</span></div>
+            <strong>{item.applicationsCount}</strong>
+            <strong>{item.originalsCount}</strong>
+            <strong>{item.priorityCount}</strong>
+          </div>)}
+          {!!report.directions.length && reportTotals && <div className="report-table-row report-table-total">
+            <div><strong>Итого</strong><span>Сумма по выбранной категории</span></div>
+            <strong>{reportTotals.applicationsCount}</strong>
+            <strong>{reportTotals.originalsCount}</strong>
+            <strong>{reportTotals.priorityCount}</strong>
+          </div>}
+          {!report.directions.length && <p className="muted">Нет специальностей для выбранной категории.</p>}
+        </div>}
+      </div>}
     </div>
   </section>;
 }

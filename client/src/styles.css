@@ -66,6 +66,9 @@ button:hover, .upload:hover { background: var(--blue); box-shadow: 0 7px 18px #1
 .badge.quiet { color: var(--burgundy); background: #f4e8ec; }
 .original-status { color: var(--burgundy); background: #f4e8ec; }
 .original-status.active { color: white; background: var(--blue-deep); }
+.funding-status, .funding-pill { color: #8a5a00; background: #fff2cc; }
+.funding-pill { display: inline-block; border-radius: 100px; padding: 5px 9px; font-size: var(--font-small); font-weight: 500; white-space: nowrap; }
+.funding-pill.quiet { color: var(--muted); background: #eef3fb; }
 .result-card-footer { display: grid; gap: 10px; margin-top: auto; }
 .result-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .result-meta .badge { margin-right: 0; }
@@ -89,6 +92,14 @@ button:hover, .upload:hover { background: var(--blue); box-shadow: 0 7px 18px #1
 .table-panel h2 { margin-bottom: 8px; }
 .meta { display: flex; justify-content: space-between; padding: 13px; background: #eaf2fe; color: #22436c; border-radius: 12px; margin-bottom: 20px; }
 .table-wrap { overflow-x: auto; }
+
+.funding-tabs { display: inline-flex; gap: 8px; padding: 6px; margin: 0 0 18px; border-radius: 16px; background: var(--surface-soft); }
+.funding-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px; background: transparent; color: var(--muted); box-shadow: none; transform: none; font-size: var(--font-small); }
+.funding-tabs button:hover { background: #eaf2fe; color: var(--blue-deep); box-shadow: none; transform: none; }
+.funding-tabs button.active { background: var(--blue-deep); color: white; }
+.funding-tabs button span { display: inline-grid; min-width: 24px; height: 24px; padding: 0 7px; place-items: center; border-radius: 999px; background: rgba(255, 255, 255, .82); color: var(--blue-deep); font-size: 13px; }
+.funding-tabs button:not(.active) span { background: white; color: var(--muted); }
+.empty-filter { margin: 14px 0 0; color: var(--muted); font-size: var(--font-small); }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 14px; text-align: left; border-bottom: 1px solid #e4eaf3; }
 th { color: var(--muted); font-size: var(--font-small); }
@@ -184,6 +195,8 @@ td strong { color: var(--blue-deep); }
   .mobile-inline-panel .table-panel h2 { margin: 6px 0 10px; font-size: clamp(16px, 4.4vw, 19px); line-height: 1.22; overflow-wrap: anywhere; word-break: normal; }
   .mobile-inline-panel .eyebrow { font-size: 12px; letter-spacing: .08em; }
   .mobile-inline-panel .meta { margin-bottom: 12px; padding: 8px 9px; font-size: 12px; }
+  .funding-tabs { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .funding-tabs button { justify-content: center; padding: 9px 8px; font-size: 13px; }
   .mobile-inline-panel .table-wrap { max-width: 100%; overflow-x: hidden; }
   .mobile-inline-panel table { width: 100%; table-layout: fixed; font-size: 12px; }
   .mobile-inline-panel th, .mobile-inline-panel td { padding: 8px 4px; overflow: hidden; text-overflow: ellipsis; }

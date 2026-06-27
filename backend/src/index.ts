@@ -74,6 +74,9 @@ type ParsedApplicant = {
   averageScore: number | string;
   originalStatus: string;
   fullName: string;
+  applicationCreatedAt: string | null;
+  fundingType: "Бюджет" | "Внебюджет";
+  educationBase: "9" | "11";
 };
 
 type ParsedSheet = {
@@ -142,12 +145,43 @@ const normalizeStudyForm = (value: unknown): "Очная" | "Заочная" | "
   return compact.includes("заоч") ? "Заочная" : "Очная";
 };
 
+const requestFundingType = (value: unknown): "Бюджет" | "Внебюджет" => value === "Внебюджет" ? "Внебюджет" : "Бюджет";
+
+const normalizeFundingType = (value: unknown): "Бюджет" | "Внебюджет" => {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/ё/g, "е");
+  const compact = normalized.replace(/[\s/_–—-]+/g, "");
+  if (
+    compact.includes("внебюдж") ||
+    compact.includes("плат") ||
+    compact.includes("договор") ||
+    compact.includes("контракт") ||
+    compact.includes("коммер")
+  ) return "Внебюджет";
+  return "Бюджет";
+};
+
+const normalizeEducationBase = (value: unknown, studyForm: "Очная" | "Заочная" | "Очно-заочная"): "9" | "11" => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized.includes("11") || normalized.includes("среднее")) return "11";
+  if (normalized.includes("9") || normalized.includes("основное")) return "9";
+  return studyForm === "Заочная" ? "11" : "9";
+};
+
+const parseApplicationDate = (value: unknown): string | null => {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/) ?? raw.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+  if (!match) return null;
+  const [year, month, day] = match[1].length === 4 ? [match[1], match[2], match[3]] : [match[3], match[2], match[1]];
+  return `${year}-${month}-${day}T12:00:00+03:00`;
+};
+
 const publicApplicant = (row: Record<string, unknown>) => ({
   position: row.position,
   snils: maskSnils(String(row.snils_normalized)),
   averageScore: Boolean(row.priority_enrollment) ? PRIORITY_ENROLLMENT_LABEL : row.average_score,
   originalProvided: Boolean(row.original_provided),
-  priorityEnrollment: Boolean(row.priority_enrollment)
+  priorityEnrollment: Boolean(row.priority_enrollment),
+  fundingType: row.funding_type === "Внебюджет" ? "Внебюджет" : "Бюджет"
 });
 
 const rerankDirection = async (directionId: number, client: PoolClient) => {
@@ -155,6 +189,7 @@ const rerankDirection = async (directionId: number, client: PoolClient) => {
     WITH ranked AS (
       SELECT id, ROW_NUMBER() OVER (
         ORDER BY
+          CASE WHEN funding_type = 'Внебюджет' THEN 1 ELSE 0 END,
           original_provided DESC,
           priority_enrollment DESC,
           CASE WHEN average_score ~ '^[0-9]+([.,][0-9]+)?$' THEN REPLACE(average_score, ',', '.')::DOUBLE PRECISION END DESC NULLS FIRST,
@@ -173,6 +208,7 @@ const rerankAllDirections = async () => {
       SELECT id, ROW_NUMBER() OVER (
         PARTITION BY direction_id
         ORDER BY
+          CASE WHEN funding_type = 'Внебюджет' THEN 1 ELSE 0 END,
           original_provided DESC,
           priority_enrollment DESC,
           CASE WHEN average_score ~ '^[0-9]+([.,][0-9]+)?$' THEN REPLACE(average_score, ',', '.')::DOUBLE PRECISION END DESC NULLS FIRST,
@@ -197,6 +233,7 @@ type ExportApplicant = {
   full_name: string;
   average_score: string;
   priority_enrollment: boolean;
+  funding_type: "Бюджет" | "Внебюджет";
 };
 
 const createWorksheetName = (direction: ExportDirection, usedNames: Set<string>) => {
@@ -220,28 +257,39 @@ const addOriginalsWorksheet = (
 ) => {
   const budgetPlaces = direction.budget_places ?? 0;
   const paidPlaces = direction.paid_places ?? 0;
-  const placesLimit = budgetPlaces + paidPlaces;
-  const exportedApplicants = applicants.slice(0, placesLimit);
-  const title = `${direction.specialty} (бюджет ${budgetPlaces} мест)`;
+  const budgetApplicants = applicants.filter((applicant) => applicant.funding_type !== "Внебюджет");
+  const paidApplicants = applicants.filter((applicant) => applicant.funding_type === "Внебюджет");
+  const title = direction.specialty;
   const worksheet = workbook.addWorksheet(worksheetName, { views: [{ showGridLines: false }] });
   worksheet.columns = [
     { width: 10 },
-    { width: Math.max(46, Math.ceil(title.length * 1.35)) },
-    { width: 28 }
+    { width: 52 },
+    { width: 30 },
+    { width: 5 },
+    { width: 10 },
+    { width: 52 },
+    { width: 30 }
   ];
-  worksheet.getCell("B1").value = title;
+  worksheet.mergeCells("A1:C1");
+  worksheet.mergeCells("E1:G1");
+  worksheet.getCell("A1").value = `${title} — Бюджет (${budgetPlaces} мест)`;
+  worksheet.getCell("E1").value = `${title} — Внебюджет (${paidPlaces} мест)`;
   worksheet.addRow([]);
-  worksheet.addRow(["", "ФИО", "Средний балл"]);
-  if (!applicants.length) {
-    worksheet.addRow(["", "Нет абитуриентов с оригиналом", ""]);
-  } else {
-    exportedApplicants.forEach((applicant, index) => {
-      worksheet.addRow([
-        index + 1,
-        applicant.full_name || "ФИО не указано",
-        applicant.priority_enrollment ? "Первоочередное зачисление" : applicant.average_score
-      ]);
-    });
+  worksheet.addRow(["", "ФИО", "Средний балл", "", "", "ФИО", "Средний балл"]);
+
+  const rowsCount = Math.max(budgetApplicants.length, paidApplicants.length, 1);
+  for (let index = 0; index < rowsCount; index += 1) {
+    const budgetApplicant = budgetApplicants[index];
+    const paidApplicant = paidApplicants[index];
+    worksheet.addRow([
+      budgetApplicant ? index + 1 : "",
+      budgetApplicant?.full_name || (index === 0 && !budgetApplicants.length ? "Нет абитуриентов с оригиналом" : ""),
+      budgetApplicant ? (budgetApplicant.priority_enrollment ? "Первоочередное зачисление" : budgetApplicant.average_score) : "",
+      "",
+      paidApplicant ? index + 1 : "",
+      paidApplicant?.full_name || (index === 0 && !paidApplicants.length ? "Нет абитуриентов с оригиналом" : ""),
+      paidApplicant ? (paidApplicant.priority_enrollment ? "Первоочередное зачисление" : paidApplicant.average_score) : ""
+    ]);
   }
 
   const border: Partial<ExcelJS.Borders> = {
@@ -251,20 +299,23 @@ const addOriginalsWorksheet = (
     right: { style: "thin", color: { argb: "FFBFBFBF" } }
   };
   worksheet.eachRow((row, rowNumber) => {
-    row.height = rowNumber === 1 ? 24 : 22;
+    row.height = rowNumber === 1 ? 54 : 22;
     row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      if (columnNumber > 3) return;
-      cell.font = { name: "Arial", size: rowNumber === 1 ? 14 : 12, bold: rowNumber === 1 || rowNumber === 3 };
+      if (columnNumber === 4 || columnNumber > 7) return;
+      cell.font = { name: "Arial", size: rowNumber === 1 ? 12 : 12, bold: rowNumber === 1 || rowNumber === 3 };
       if (!applicants.length && rowNumber === 4) {
         cell.font = { name: "Arial", size: 12, italic: true };
       }
       cell.alignment = {
-        horizontal: rowNumber >= 4 && columnNumber === 2 ? "left" : "center",
+        horizontal: rowNumber >= 4 && (columnNumber === 2 || columnNumber === 6) ? "left" : "center",
         vertical: "middle",
-        wrapText: rowNumber !== 1
+        wrapText: true
       };
       cell.border = border;
-      if (rowNumber >= 4 && rowNumber - 3 > budgetPlaces) {
+      const applicantIndex = rowNumber - 3;
+      const isBudgetOverflow = applicantIndex > budgetPlaces && columnNumber >= 1 && columnNumber <= 3 && Boolean(row.getCell(1).value);
+      const isPaidOverflow = applicantIndex > paidPlaces && columnNumber >= 5 && columnNumber <= 7 && Boolean(row.getCell(5).value);
+      if (rowNumber >= 4 && (isBudgetOverflow || isPaidOverflow)) {
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
       }
     });
@@ -290,7 +341,7 @@ const parseSheet = (sheet: XLSX.WorkSheet): Omit<ParsedSheet, "sheetName"> => {
   const effectivePositionIndex = positionIndex >= 0 ? positionIndex : 0;
   const effectiveScoreIndex = scoreIndex >= 0 ? scoreIndex : 2;
 
-  const applicants = rows.slice(headerRowIndex + 1).flatMap((row) => {
+  const applicants = rows.slice(headerRowIndex + 1).flatMap<ParsedApplicant>((row) => {
     const position = Number(row[effectivePositionIndex]);
     const snils = snilsIndex >= 0 ? normalizeSnils(row[snilsIndex]) : "";
     const scoreRaw = String(row[effectiveScoreIndex] ?? "").replace(",", ".");
@@ -302,11 +353,20 @@ const parseSheet = (sheet: XLSX.WorkSheet): Omit<ParsedSheet, "sheetName"> => {
       snils,
       averageScore,
       originalStatus: originalIndex >= 0 ? String(row[originalIndex] || "Да").trim() : "Да",
-      fullName: ""
+      fullName: "",
+      applicationCreatedAt: null,
+      fundingType: "Бюджет" as const,
+      educationBase: "9" as const
     }];
   });
 
-  return { specialty, studyForm: "Очная", budgetPlaces, applicants, hasSnilsColumn: snilsIndex >= 0 };
+  return {
+    specialty,
+    studyForm: "Очная" as const,
+    budgetPlaces,
+    applicants,
+    hasSnilsColumn: snilsIndex >= 0
+  };
 };
 
 const parseRegistry = (sheet: XLSX.WorkSheet): { parsedSheets: ParsedSheet[]; skippedRows: number; mergedDuplicates: number } => {
@@ -314,7 +374,15 @@ const parseRegistry = (sheet: XLSX.WorkSheet): { parsedSheets: ParsedSheet[]; sk
   const grouped = new Map<string, {
     specialty: string;
     studyForm: "Очная" | "Заочная" | "Очно-заочная";
-    applicants: Map<string, { snils: string; averageScore: number; originalStatus: string; fullName: string }>;
+    applicants: Map<string, {
+      snils: string;
+      averageScore: number;
+      originalStatus: string;
+      fullName: string;
+      applicationCreatedAt: string | null;
+      fundingType: "Бюджет" | "Внебюджет";
+      educationBase: "9" | "11";
+    }>;
   }>();
   let skippedRows = 0;
   let mergedDuplicates = 0;
@@ -322,6 +390,11 @@ const parseRegistry = (sheet: XLSX.WorkSheet): { parsedSheets: ParsedSheet[]; sk
   rows.forEach((row) => {
     const specialty = String(row["Специальность"] ?? "").trim().replace(/\s+/g, " ");
     const studyForm = normalizeStudyForm(row["Форма обучения"]);
+    const status = String(row["Статус заявления"] ?? "").trim();
+    if (status.toLowerCase().replace(/ё/g, "е").includes("отклон")) {
+      skippedRows += 1;
+      return;
+    }
     const groupKey = `${specialty.toLowerCase()}::${studyForm}`;
     const snils = normalizeSnils(row["СНИЛС абитуриента"]);
     const averageScore = Number(String(row["Средний балл аттестата"] ?? "").replace(",", "."));
@@ -331,17 +404,24 @@ const parseRegistry = (sheet: XLSX.WorkSheet): { parsedSheets: ParsedSheet[]; sk
     }
 
     const group = grouped.get(groupKey) ?? { specialty, studyForm, applicants: new Map() };
-    const existing = group.applicants.get(snils);
+    const applicationCreatedAt = parseApplicationDate(row["Дата подачи заявления"]);
+    const fundingType = normalizeFundingType(row["Тип финансирования"]);
+    const educationBase = normalizeEducationBase(row["Базовое образование"], studyForm);
+    const applicantKey = `${snils}::${fundingType}`;
+    const existing = group.applicants.get(applicantKey);
     if (existing) mergedDuplicates += 1;
     if (!existing || averageScore > existing.averageScore) {
-      group.applicants.set(snils, {
+      group.applicants.set(applicantKey, {
         snils,
         averageScore,
-        originalStatus: String(row["Статус заявления"] || "Не указан").trim(),
+        originalStatus: status || "Не указан",
         fullName: [row["Фамилия абитуриента"], row["Имя абитуриента"], row["Отчество абитуриента"]]
           .map((part) => String(part ?? "").trim())
           .filter(Boolean)
-          .join(" ")
+          .join(" "),
+        applicationCreatedAt,
+        fundingType,
+        educationBase
       });
     }
     grouped.set(groupKey, group);
@@ -375,7 +455,7 @@ app.get("/api/directions/:id/applicants", async (request, response) => {
   if (!direction) return response.status(404).json({ error: "Направление не найдено" });
 
   const applicants = await query<Record<string, unknown> & { position: number }>(
-    "SELECT a.position, a.snils_normalized, a.average_score, a.original_provided, a.priority_enrollment FROM applicants a WHERE a.direction_id = $1 ORDER BY a.position",
+    "SELECT a.position, a.snils_normalized, a.average_score, a.original_provided, a.priority_enrollment, a.funding_type FROM applicants a WHERE a.direction_id = $1 ORDER BY a.position",
     [request.params.id]
   );
   response.json({ direction, applicants: applicants.map(publicApplicant) });
@@ -402,7 +482,7 @@ app.post("/api/search", rateLimit("search", 30, 60_000), async (request, respons
 
   const rows = await query<Record<string, unknown>>(`
     SELECT a.position, a.snils_normalized, a.average_score, a.original_provided,
-      a.priority_enrollment,
+      a.priority_enrollment, a.funding_type,
       d.id AS direction_id, d.specialty, d.study_form, d.budget_places, d.paid_places, d.updated_at
     FROM applicants a JOIN directions d ON d.id = a.direction_id
     WHERE a.snils_normalized = $1 ORDER BY d.specialty
@@ -418,7 +498,8 @@ app.post("/api/search", rateLimit("search", 30, 60_000), async (request, respons
     snils: maskSnils(snils),
     average_score: row.average_score,
     originalProvided: Boolean(row.original_provided),
-    priorityEnrollment: Boolean(row.priority_enrollment)
+    priorityEnrollment: Boolean(row.priority_enrollment),
+    fundingType: row.funding_type === "Внебюджет" ? "Внебюджет" : "Бюджет"
   })));
 });
 
@@ -428,7 +509,7 @@ app.get("/api/admin/applicants", requireAuth, requireRole("admin"), async (reque
   const snils = normalizeSnils(searchTerm);
   const nameQuery = `%${searchTerm.toLowerCase()}%`;
   const rows = await query<Record<string, unknown>>(`
-    SELECT a.direction_id, a.snils_normalized, a.full_name, a.original_provided, a.priority_enrollment, a.position, a.average_score,
+    SELECT a.direction_id, a.snils_normalized, a.full_name, a.original_provided, a.priority_enrollment, a.funding_type, a.position, a.average_score,
       d.specialty, d.study_form
     FROM applicants a JOIN directions d ON d.id = a.direction_id
     WHERE ($1 != '' AND a.snils_normalized = $1) OR a.full_name_search LIKE $2 OR d.specialty_search LIKE $2
@@ -441,6 +522,7 @@ app.get("/api/admin/applicants", requireAuth, requireRole("admin"), async (reque
     snilsNormalized: row.snils_normalized,
     originalProvided: Boolean(row.original_provided),
     priorityEnrollment: Boolean(row.priority_enrollment),
+    fundingType: row.funding_type === "Внебюджет" ? "Внебюджет" : "Бюджет",
     position: row.position,
     averageScore: row.average_score,
     specialty: row.specialty,
@@ -448,12 +530,126 @@ app.get("/api/admin/applicants", requireAuth, requireRole("admin"), async (reque
   })));
 });
 
+const reportCategories = {
+  budget_9: "Бюджет на базе 9 класса",
+  paid_9_fulltime: "Внебюджет на базе 9 класса очно",
+  paid_9_parttime: "Внебюджет на базе 9 класса очно-заочно",
+  paid_11_distance: "Внебюджет на базе 11 класса заочно"
+} as const;
+
+type ReportCategory = keyof typeof reportCategories;
+
+const isReportCategory = (value: unknown): value is ReportCategory =>
+  typeof value === "string" && Object.hasOwn(reportCategories, value);
+
+const reportCategoryKeys = Object.keys(reportCategories) as ReportCategory[];
+
+app.get("/api/admin/report", requireAuth, requireRole("admin"), async (request, response) => {
+  const date = String(request.query.date ?? "");
+  const category = request.query.category;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: "Некорректная дата отчёта" });
+  if (!isReportCategory(category)) return response.status(400).json({ error: "Некорректная категория отчёта" });
+
+  const applicantConditionByCategory: Record<ReportCategory, (alias: string) => string> = {
+    budget_9: (alias) => `${alias}.funding_type = 'Бюджет' AND ${alias}.education_base = '9'`,
+    paid_9_fulltime: (alias) => `${alias}.funding_type <> 'Бюджет' AND ${alias}.education_base = '9' AND d.study_form = 'Очная'`,
+    paid_9_parttime: (alias) => `${alias}.funding_type <> 'Бюджет' AND ${alias}.education_base = '9' AND d.study_form = 'Очно-заочная'`,
+    paid_11_distance: (alias) => `${alias}.funding_type <> 'Бюджет' AND ${alias}.education_base = '11' AND d.study_form = 'Заочная'`
+  };
+  const applicantCondition = applicantConditionByCategory[category]("a");
+  const directionCondition = applicantConditionByCategory[category]("x");
+
+  const categorySummary = await queryOne<Record<ReportCategory, string>>(`
+    SELECT
+      COUNT(a.id) FILTER (
+        WHERE ${applicantConditionByCategory.budget_9("a")}
+          AND a.application_created_at::date <= $1::date
+      ) AS budget_9,
+      COUNT(a.id) FILTER (
+        WHERE ${applicantConditionByCategory.paid_9_fulltime("a")}
+          AND a.application_created_at::date <= $1::date
+      ) AS paid_9_fulltime,
+      COUNT(a.id) FILTER (
+        WHERE ${applicantConditionByCategory.paid_9_parttime("a")}
+          AND a.application_created_at::date <= $1::date
+      ) AS paid_9_parttime,
+      COUNT(a.id) FILTER (
+        WHERE ${applicantConditionByCategory.paid_11_distance("a")}
+          AND a.application_created_at::date <= $1::date
+      ) AS paid_11_distance
+    FROM applicants a
+    JOIN directions d ON d.id = a.direction_id
+  `, [date]);
+
+  const rows = await query<{
+    direction_id: number;
+    specialty: string;
+    study_form: string;
+    budget_places: number | null;
+    paid_places: number | null;
+    applications_count: string;
+    originals_count: string;
+    priority_count: string;
+  }>(`
+    SELECT
+      d.id AS direction_id,
+      d.specialty,
+      d.study_form,
+      d.budget_places,
+      d.paid_places,
+      COUNT(a.id) FILTER (
+        WHERE ${applicantCondition}
+          AND a.application_created_at::date <= $1::date
+      ) AS applications_count,
+      COUNT(a.id) FILTER (
+        WHERE ${applicantCondition}
+          AND a.original_provided = TRUE
+          AND a.application_created_at::date <= $1::date
+      ) AS originals_count,
+      COUNT(a.id) FILTER (
+        WHERE ${applicantCondition}
+          AND a.priority_enrollment = TRUE
+          AND a.application_created_at::date <= $1::date
+      ) AS priority_count
+    FROM directions d
+    LEFT JOIN applicants a ON a.direction_id = d.id
+    WHERE EXISTS (
+      SELECT 1 FROM applicants x
+      WHERE x.direction_id = d.id AND ${directionCondition}
+    )
+    GROUP BY d.id, d.specialty, d.study_form, d.budget_places, d.paid_places
+    ORDER BY d.specialty, d.study_form
+  `, [date]);
+
+  const categoryApplications = Object.fromEntries(
+    reportCategoryKeys.map((key) => [key, Number(categorySummary?.[key] ?? 0)])
+  ) as Record<ReportCategory, number>;
+
+  response.json({
+    date,
+    category,
+    title: reportCategories[category],
+    totalApplications: reportCategoryKeys.reduce((total, key) => total + categoryApplications[key], 0),
+    categoryApplications,
+    directions: rows.map((row) => ({
+      directionId: row.direction_id,
+      specialty: row.specialty,
+      studyForm: row.study_form,
+      budgetPlaces: row.budget_places,
+      paidPlaces: row.paid_places,
+      applicationsCount: Number(row.applications_count),
+      originalsCount: Number(row.originals_count),
+      priorityCount: Number(row.priority_count)
+    }))
+  });
+});
+
 app.get("/api/admin/directions/:id/applicants", requireAuth, requireRole("admin"), async (request, response) => {
   const direction = await queryOne("SELECT id, specialty, study_form, budget_places, paid_places, updated_at FROM directions WHERE id = $1", [request.params.id]);
   if (!direction) return response.status(404).json({ error: "Специальность не найдена" });
 
   const rows = await query<Record<string, unknown>>(`
-    SELECT position, snils_normalized, full_name, average_score, original_provided, priority_enrollment
+    SELECT position, snils_normalized, full_name, average_score, original_provided, priority_enrollment, funding_type
     FROM applicants WHERE direction_id = $1 ORDER BY position
   `, [request.params.id]);
   response.json({
@@ -464,6 +660,7 @@ app.get("/api/admin/directions/:id/applicants", requireAuth, requireRole("admin"
       snilsNormalized: row.snils_normalized,
       originalProvided: Boolean(row.original_provided),
       priorityEnrollment: Boolean(row.priority_enrollment),
+      fundingType: row.funding_type === "Внебюджет" ? "Внебюджет" : "Бюджет",
       position: row.position,
       averageScore: row.average_score
     }))
@@ -475,10 +672,11 @@ app.patch("/api/admin/applicants/:snils/original", rateLimit("admin-write", 240,
   if (snils.length !== 11) return response.status(400).json({ error: "Некорректный СНИЛС" });
   const directionId = Number(request.body.directionId);
   if (!Number.isInteger(directionId)) return response.status(400).json({ error: "Некорректная специальность" });
+  const fundingType = requestFundingType(request.body.fundingType);
   const originalProvided = request.body.originalProvided === true;
   const applicant = await queryOne<{ direction_id: number }>(
-    "SELECT direction_id FROM applicants WHERE snils_normalized = $1 AND direction_id = $2",
-    [snils, directionId]
+    "SELECT direction_id FROM applicants WHERE snils_normalized = $1 AND direction_id = $2 AND funding_type = $3",
+    [snils, directionId, fundingType]
   );
   if (!applicant) return response.status(404).json({ error: "Абитуриент не найден в выбранной специальности" });
   const affectedDirections = await query<{ direction_id: number }>(
@@ -487,11 +685,14 @@ app.patch("/api/admin/applicants/:snils/original", rateLimit("admin-write", 240,
   );
 
   await transaction(async (client) => {
-    await client.query("UPDATE applicants SET original_provided = FALSE WHERE snils_normalized = $1", [snils]);
+    await client.query(
+      "UPDATE applicants SET original_provided = FALSE, original_provided_at = NULL WHERE snils_normalized = $1",
+      [snils]
+    );
     if (originalProvided) {
       await client.query(
-        "UPDATE applicants SET original_provided = TRUE WHERE snils_normalized = $1 AND direction_id = $2",
-        [snils, directionId]
+        "UPDATE applicants SET original_provided = TRUE, original_provided_at = NOW() WHERE snils_normalized = $1 AND direction_id = $2 AND funding_type = $3",
+        [snils, directionId, fundingType]
       );
     }
     for (const { direction_id } of affectedDirections) await rerankDirection(direction_id, client);
@@ -505,22 +706,62 @@ app.patch("/api/admin/applicants/:snils/priority", rateLimit("admin-write", 240,
   if (snils.length !== 11) return response.status(400).json({ error: "Некорректный СНИЛС" });
   const directionId = Number(request.body.directionId);
   if (!Number.isInteger(directionId)) return response.status(400).json({ error: "Некорректная специальность" });
+  const fundingType = requestFundingType(request.body.fundingType);
   const priorityEnrollment = request.body.priorityEnrollment === true;
   const applicant = await queryOne<{ direction_id: number }>(
-    "SELECT direction_id FROM applicants WHERE snils_normalized = $1 AND direction_id = $2",
-    [snils, directionId]
+    "SELECT direction_id FROM applicants WHERE snils_normalized = $1 AND direction_id = $2 AND funding_type = $3",
+    [snils, directionId, fundingType]
   );
   if (!applicant) return response.status(404).json({ error: "Абитуриент не найден в выбранной специальности" });
 
   await transaction(async (client) => {
     await client.query(
-      "UPDATE applicants SET priority_enrollment = $1 WHERE snils_normalized = $2 AND direction_id = $3",
-      [priorityEnrollment, snils, directionId]
+      "UPDATE applicants SET priority_enrollment = $1, priority_enrollment_at = CASE WHEN $1 THEN NOW() ELSE NULL END WHERE snils_normalized = $2 AND direction_id = $3 AND funding_type = $4",
+      [priorityEnrollment, snils, directionId, fundingType]
     );
     await rerankDirection(directionId, client);
   });
   broadcastRatingsChanged("priority");
   response.json({ updatedDirection: directionId });
+});
+
+app.patch("/api/admin/applicants/:snils/funding", rateLimit("admin-write", 240, 60_000), requireAuth, requireRole("admin"), async (request, response) => {
+  const snils = normalizeSnils(request.params.snils);
+  if (snils.length !== 11) return response.status(400).json({ error: "Некорректный СНИЛС" });
+  const directionId = Number(request.body.directionId);
+  if (!Number.isInteger(directionId)) return response.status(400).json({ error: "Некорректная специальность" });
+  const currentFundingType = requestFundingType(request.body.currentFundingType);
+  const fundingType = request.body.paidOnly === true ? "Внебюджет" : "Бюджет";
+  const applicant = await queryOne<{ direction_id: number }>(
+    "SELECT direction_id FROM applicants WHERE snils_normalized = $1 AND direction_id = $2 AND funding_type = $3",
+    [snils, directionId, currentFundingType]
+  );
+  if (!applicant) return response.status(404).json({ error: "Абитуриент не найден в выбранной специальности" });
+
+  const duplicateFunding = fundingType !== currentFundingType ? await queryOne<{ id: number }>(
+    "SELECT id FROM applicants WHERE snils_normalized = $1 AND direction_id = $2 AND funding_type = $3",
+    [snils, directionId, fundingType]
+  ) : null;
+  if (duplicateFunding) {
+    return response.status(409).json({ error: "У абитуриента уже есть запись с таким типом финансирования в этой специальности" });
+  }
+
+  try {
+    await transaction(async (client) => {
+      await client.query(
+        "UPDATE applicants SET funding_type = $1 WHERE snils_normalized = $2 AND direction_id = $3 AND funding_type = $4",
+        [fundingType, snils, directionId, currentFundingType]
+      );
+      await rerankDirection(directionId, client);
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+      return response.status(409).json({ error: "У абитуриента уже есть запись с таким типом финансирования в этой специальности" });
+    }
+    throw error;
+  }
+  broadcastRatingsChanged("funding");
+  response.json({ updatedDirection: directionId, fundingType });
 });
 
 const updateDirectionPlaces = async (request: Request, response: Response) => {
@@ -550,7 +791,7 @@ app.get("/api/admin/directions/:id/export-originals", rateLimit("admin-export", 
   if (!direction) return response.status(404).json({ error: "Специальность не найдена" });
 
   const applicants = await query<ExportApplicant>(
-    `SELECT position, full_name, average_score, priority_enrollment
+    `SELECT position, full_name, average_score, priority_enrollment, funding_type
      FROM applicants
      WHERE direction_id = $1 AND original_provided = TRUE
      ORDER BY position`,
@@ -562,8 +803,7 @@ app.get("/api/admin/directions/:id/export-originals", rateLimit("admin-export", 
 
   const budgetPlaces = direction.budget_places ?? 0;
   const paidPlaces = direction.paid_places ?? 0;
-  const placesLimit = budgetPlaces + paidPlaces;
-  if (placesLimit <= 0) {
+  if ((budgetPlaces + paidPlaces) <= 0) {
     return response.status(400).json({ error: "Заполните количество бюджетных или внебюджетных мест" });
   }
   const workbook = new ExcelJS.Workbook();
@@ -589,7 +829,7 @@ app.get("/api/admin/export-originals", rateLimit("admin-export", 60, 60_000), re
   const applicantsByDirection = new Map<number, ExportApplicant[]>();
   for (const direction of directions) {
     const applicants = await query<ExportApplicant>(
-      `SELECT position, full_name, average_score, priority_enrollment
+      `SELECT position, full_name, average_score, priority_enrollment, funding_type
        FROM applicants
        WHERE direction_id = $1 AND original_provided = TRUE
       ORDER BY position`,
@@ -655,7 +895,7 @@ app.post("/api/admin/import-workbook", rateLimit("admin-import", 20, 15 * 60_000
       (!isRegistry && (!Number.isInteger(item.budgetPlaces) || item.budgetPlaces === null || item.budgetPlaces < 0)) ||
       item.applicants.length === 0 ||
       item.applicants.some((applicant) => applicant.snils.length !== 11) ||
-      new Set(item.applicants.map((applicant) => applicant.snils)).size !== item.applicants.length
+      new Set(item.applicants.map((applicant) => `${applicant.snils}:${applicant.fundingType}`)).size !== item.applicants.length
     ).map((item) => item.sheetName);
     if (invalidSheets.length) {
       return response.status(400).json({
@@ -668,20 +908,40 @@ app.post("/api/admin/import-workbook", rateLimit("admin-import", 20, 15 * 60_000
     }
 
     await transaction(async (client) => {
-      const originals = new Set(
-        (await query<{ direction_id: number; snils_normalized: string }>(
-          "SELECT direction_id, snils_normalized FROM applicants WHERE original_provided = TRUE",
+      const originals = new Map(
+        (await query<{ direction_id: number; snils_normalized: string; funding_type: "Бюджет" | "Внебюджет"; original_provided_at: Date | null }>(
+          "SELECT direction_id, snils_normalized, funding_type, original_provided_at FROM applicants WHERE original_provided = TRUE",
           [],
           client
-        )).map((item) => `${item.direction_id}:${item.snils_normalized}`)
+        )).map((item) => [`${item.direction_id}:${item.snils_normalized}:${item.funding_type}`, item.original_provided_at])
       );
-      const priorities = new Set(
-        (await query<{ direction_id: number; snils_normalized: string }>(
-          "SELECT direction_id, snils_normalized FROM applicants WHERE priority_enrollment = TRUE",
+      const priorities = new Map(
+        (await query<{ direction_id: number; snils_normalized: string; funding_type: "Бюджет" | "Внебюджет"; priority_enrollment_at: Date | null }>(
+          "SELECT direction_id, snils_normalized, funding_type, priority_enrollment_at FROM applicants WHERE priority_enrollment = TRUE",
           [],
           client
-        )).map((item) => `${item.direction_id}:${item.snils_normalized}`)
+        )).map((item) => [`${item.direction_id}:${item.snils_normalized}:${item.funding_type}`, item.priority_enrollment_at])
       );
+      const applicationDates = new Map(
+        (await query<{ direction_id: number; snils_normalized: string; application_created_at: Date }>(
+          "SELECT direction_id, snils_normalized, application_created_at FROM applicants",
+          [],
+          client
+        )).map((item) => [`${item.direction_id}:${item.snils_normalized}`, item.application_created_at])
+      );
+      const existingFundingRows = await query<{ direction_id: number; snils_normalized: string; funding_type: "Бюджет" | "Внебюджет" }>(
+        "SELECT direction_id, snils_normalized, funding_type FROM applicants",
+        [],
+        client
+      );
+      const exactFundingTypes = new Map(existingFundingRows.map((item) => [`${item.direction_id}:${item.snils_normalized}:${item.funding_type}`, item.funding_type]));
+      const singleFundingTypes = new Map<string, "Бюджет" | "Внебюджет">();
+      const fundingCounts = new Map<string, number>();
+      for (const item of existingFundingRows) {
+        const key = `${item.direction_id}:${item.snils_normalized}`;
+        fundingCounts.set(key, (fundingCounts.get(key) ?? 0) + 1);
+        singleFundingTypes.set(key, item.funding_type);
+      }
       const publishedDirectionIds: number[] = [];
 
       for (const sheet of parsedSheets) {
@@ -700,11 +960,37 @@ app.post("/api/admin/import-workbook", rateLimit("admin-import", 20, 15 * 60_000
         publishedDirectionIds.push(directionId);
         await client.query("DELETE FROM applicants WHERE direction_id = $1", [directionId]);
         for (const item of sheet.applicants) {
+          const applicantKey = `${directionId}:${item.snils}`;
+          const applicantFundingKey = `${directionId}:${item.snils}:${item.fundingType}`;
+          const sameSnilsInSheet = sheet.applicants.filter((applicant) => applicant.snils === item.snils).length;
+          const preservedFundingType = exactFundingTypes.get(applicantFundingKey)
+            ?? (sameSnilsInSheet === 1 && fundingCounts.get(applicantKey) === 1 ? singleFundingTypes.get(applicantKey) : undefined)
+            ?? item.fundingType;
+          const originalProvidedAt = originals.get(applicantFundingKey) ?? null;
+          const priorityEnrollmentAt = priorities.get(applicantFundingKey) ?? null;
           await client.query(
             `INSERT INTO applicants
-             (direction_id, position, snils_normalized, average_score, original_status, full_name, full_name_search, original_provided, priority_enrollment)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [directionId, item.position, item.snils, String(item.averageScore), item.originalStatus, item.fullName, item.fullName.toLowerCase(), originals.has(`${directionId}:${item.snils}`), priorities.has(`${directionId}:${item.snils}`)]
+             (direction_id, position, snils_normalized, average_score, original_status, full_name, full_name_search,
+              original_provided, priority_enrollment, application_created_at, original_provided_at, priority_enrollment_at,
+              funding_type, education_base)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, $11, NOW()), $12, $13, $14, $15)`,
+            [
+              directionId,
+              item.position,
+              item.snils,
+              String(item.averageScore),
+              item.originalStatus,
+              item.fullName,
+              item.fullName.toLowerCase(),
+              originals.has(applicantFundingKey),
+              priorities.has(applicantFundingKey),
+              item.applicationCreatedAt,
+              applicationDates.get(applicantKey) ?? null,
+              originalProvidedAt,
+              priorityEnrollmentAt,
+              preservedFundingType,
+              item.educationBase
+            ]
           );
         }
         await rerankDirection(directionId, client);
@@ -738,11 +1024,17 @@ app.use("/api", (_request, response) => {
   response.status(404).json({ error: "API endpoint не найден" });
 });
 
-app.use((error: Error, _request: Request, response: Response, next: NextFunction) => {
+app.use((error: Error, request: Request, response: Response, next: NextFunction) => {
   if (response.headersSent) return next(error);
   if (error.message === "CORS origin is not allowed") {
     return response.status(403).json({ error: "Источник запроса запрещён" });
   }
+  console.error("[api-error]", {
+    method: request.method,
+    path: request.path,
+    message: error.message,
+    stack: error.stack
+  });
   response.status(500).json({ error: "Внутренняя ошибка сервера" });
 });
 
